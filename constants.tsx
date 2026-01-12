@@ -8,94 +8,100 @@ const generateMockData = (): OEMEquipment[] => {
   const data: OEMEquipment[] = [];
   
   BRANDS.forEach(brand => {
-    for (let i = 1; i <= 20; i++) {
-      const coolingCap = 100 + Math.random() * 1200;
+    // Generate Standard Chillers
+    for (let i = 1; i <= 10; i++) {
+      const coolingCap = 150 + Math.random() * 800;
       const typeSeed = Math.random();
       
       let type: EquipmentType = EquipmentType.AIR_COOLED_CHILLER;
       let condensationType = CondensationType.AIR;
-      let maxFluidTemp = 15;
+      let maxFluidTemp = 18;
       let minFluidTemp = -10;
       let minAmbientTemp = -15;
       let maxAmbientTemp = 48;
       let refrigerant = Refrigerant.R134a;
       let compressor = CompressorType.SCREW;
 
-      if (typeSeed > 0.8) {
-        type = EquipmentType.HIGH_TEMP_HEAT_PUMP;
-        condensationType = CondensationType.WATER;
-        maxFluidTemp = 75 + Math.floor(Math.random() * 15);
-        minFluidTemp = 35;
-        minAmbientTemp = 5;
-        maxAmbientTemp = 35; 
-        refrigerant = Math.random() > 0.5 ? Refrigerant.R290 : Refrigerant.R1234ze;
-        compressor = CompressorType.RECIPROCATING;
-      } else if (typeSeed > 0.6) {
-        type = EquipmentType.HEAT_PUMP;
-        condensationType = CondensationType.AIR;
-        maxFluidTemp = 55;
-        minFluidTemp = -15;
-        minAmbientTemp = -20;
-        maxAmbientTemp = 45;
-        refrigerant = Refrigerant.R32;
-        compressor = CompressorType.SCROLL;
-      } else if (typeSeed > 0.4) {
+      if (typeSeed > 0.5) {
         type = EquipmentType.WATER_COOLED_CHILLER;
         condensationType = CondensationType.WATER;
-        maxFluidTemp = 18;
-        minFluidTemp = -8;
-        minAmbientTemp = 10;
-        maxAmbientTemp = 40;
-        refrigerant = Refrigerant.R513A;
         compressor = CompressorType.CENTRIFUGAL;
-      } else if (typeSeed > 0.2) {
-        type = EquipmentType.TWO_STAGE_CHILLER;
-        condensationType = CondensationType.WATER;
-        refrigerant = Refrigerant.R134a;
-        compressor = CompressorType.TURBOCOR;
-      }
-
-      let model = "";
-      const capSuffix = Math.round(coolingCap);
-      switch(brand) {
-        case 'Carrier': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? '61CHT' : '30XW'}-${capSuffix}`; break;
-        case 'Daikin': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 'EWHT' : 'EWAD'}-${capSuffix}-PRO`; break;
-        case 'Mitsubishi': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 'MEHP' : 'NX-W'}-${capSuffix}`; break;
-        case 'Trane': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 'RHTA' : 'RTWD'}-${capSuffix}`; break;
-        case 'AERMEC': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 'HWW' : 'NSG'}-${capSuffix}`; break;
-        case 'Systemair': model = `${type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 'SYSHI' : 'SYSCROLL'}-${capSuffix}`; break;
-        default: model = `${brand}-${capSuffix}`;
+        refrigerant = Refrigerant.R513A;
       }
 
       data.push({
-        id: `${brand.toLowerCase()}-${type.toLowerCase().replace(/\s/g, '-')}-${i}`,
+        id: `${brand.toLowerCase()}-chiller-${i}`,
         brand,
-        model,
+        model: `${brand === 'Carrier' ? '30XB' : brand === 'Daikin' ? 'EWAD' : 'NX'}-${Math.round(coolingCap)}`,
         condensationType,
         coolingCapacity: coolingCap,
-        heatingCapacity: type.includes('Heat Pump') ? coolingCap * (1.1 + Math.random() * 0.4) : 0,
-        eer: 2.8 + Math.random() * 1.8,
-        cop: 3.2 + Math.random() * 1.5,
-        eseer: 4.2 + Math.random() * 3.5,
+        heatingCapacity: 0,
+        eer: 3.1 + Math.random() * 1.2,
+        cop: 0,
+        eseer: 4.5 + Math.random() * 2.5,
         refrigerant,
         compressorType: compressor,
-        dimensions: `${Math.round(2000 + Math.random() * 3000)}x${Math.round(1500 + Math.random() * 800)}x${Math.round(2000 + Math.random() * 1000)}`,
-        weight: Math.round(1200 + Math.random() * 6000),
-        noiseLevel: 58 + Math.round(Math.random() * 20),
-        price: Math.round(45000 + (coolingCap * 180) + (type === EquipmentType.HIGH_TEMP_HEAT_PUMP ? 25000 : 0)),
+        dimensions: "3500x2200x2400",
+        weight: 4500,
+        noiseLevel: 65,
+        price: Math.round(40000 + coolingCap * 160),
         minFluidTemp,
         maxFluidTemp,
         minAmbientTemp,
         maxAmbientTemp,
         efficiencyCurve: [
-          { x: 25, y: 0.7 + Math.random() * 0.1 },
-          { x: 50, y: 0.9 + Math.random() * 0.05 },
-          { x: 75, y: 1.0 },
-          { x: 100, y: 0.85 + Math.random() * 0.05 }
+          { x: 25, y: 0.75 }, { x: 50, y: 0.92 }, { x: 75, y: 1.0 }, { x: 100, y: 0.88 }
         ]
       });
     }
+
+    // SPECIAL ADDITION: High Temperature Heat Pumps (60ºC, 70ºC, 80ºC+)
+    // These are specific market-aligned solutions
+    const highTempSolutions = [
+      { temp: 65, label: 'HT65', refr: Refrigerant.R410A, comp: CompressorType.SCROLL },
+      { temp: 75, label: 'VHT75', refr: Refrigerant.R290, comp: CompressorType.RECIPROCATING },
+      { temp: 82, label: 'UHT82', refr: Refrigerant.R1234ze, comp: CompressorType.SCREW },
+      { temp: 90, label: 'Q-TON-CO2', refr: Refrigerant.R134a, comp: CompressorType.RECIPROCATING } // Simulated CO2 as R134a for now as per enum
+    ];
+
+    highTempSolutions.forEach((sol, idx) => {
+      const cap = 50 + Math.random() * 400;
+      let model = "";
+      
+      // Market alignment for models
+      if (brand === 'Carrier') model = sol.temp > 75 ? `61XWH-ZE-${Math.round(cap)}` : `61AF-${Math.round(cap)}`;
+      else if (brand === 'Daikin') model = sol.temp > 70 ? `EWHT-P-${Math.round(cap)}` : `EWAH-TZ-${Math.round(cap)}`;
+      else if (brand === 'Mitsubishi') model = sol.temp > 80 ? `Q-TON-ESA-${Math.round(cap)}` : `CAHV-P-${Math.round(cap)}`;
+      else if (brand === 'Trane') model = sol.temp > 75 ? `RHTA-Ex-${Math.round(cap)}` : `RTWD-HiTemp-${Math.round(cap)}`;
+      else model = `${brand}-VHT-${sol.temp}-${Math.round(cap)}`;
+
+      data.push({
+        id: `${brand.toLowerCase()}-ht-hp-${sol.temp}-${idx}`,
+        brand,
+        model,
+        condensationType: CondensationType.WATER,
+        coolingCapacity: cap * 0.7, // Some recovery capacity
+        heatingCapacity: cap,
+        eer: 2.5 + Math.random(),
+        cop: 3.2 + (sol.temp < 70 ? 0.8 : 0), // Higher efficiency at lower hot water temps
+        eseer: 3.5 + Math.random(),
+        refrigerant: sol.refr,
+        compressorType: sol.comp,
+        dimensions: "2200x1200x2000",
+        weight: 1800,
+        noiseLevel: 62,
+        price: Math.round(55000 + cap * 250),
+        minFluidTemp: 30, // Entrance temp
+        maxFluidTemp: sol.temp, // Target temp
+        minAmbientTemp: 5,
+        maxAmbientTemp: 40,
+        efficiencyCurve: [
+          { x: 25, y: 0.82 }, { x: 50, y: 0.95 }, { x: 75, y: 1.0 }, { x: 100, y: 0.90 }
+        ]
+      });
+    });
   });
+
   return data;
 };
 

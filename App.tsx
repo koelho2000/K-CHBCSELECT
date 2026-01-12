@@ -30,7 +30,7 @@ import {
   Activity, Info, Scale, CheckCircle2, AlertCircle,
   Database, ArrowUpRight, Gauge, Briefcase, Globe,
   Settings, Droplets, Sun, Snowflake, Zap, MapPin, Building2, User, Table, LayoutGrid, Clock, FileDown, FileUp, ListChecks, Copy, FileCode, FileType, Check, Wand2, Eye, X, Award, CheckCircle, Calculator, SlidersHorizontal, ChevronLeft,
-  BarChart2, Star, ClipboardList, FileOutput, Share2, Lightbulb
+  BarChart2, Star, ClipboardList, FileOutput, Share2, Lightbulb, ThermometerSnowflake, Flame
 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -88,6 +88,9 @@ const App: React.FC = () => {
   const [brandFilter, setBrandFilter] = useState<string>('All');
   const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
   const [compressorFilter, setCompressorFilter] = useState<string>('All');
+  const [modeFilter, setModeFilter] = useState<string>('All'); // New: Cool / Heat / HeatPump
+  const [minTempFilter, setMinTempFilter] = useState<string>(''); // New: Temp Min
+  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); // New: Temp Max
   const [searchTerm, setSearchTerm] = useState('');
 
   const stats = useMemo(() => {
@@ -111,10 +114,28 @@ const App: React.FC = () => {
         item.model.toLowerCase().includes(searchTerm.toLowerCase()) || 
         item.brand.toLowerCase().includes(searchTerm.toLowerCase());
 
+      // New Mode Filter (Cooling Only / Heating Only / Heat Pump)
+      let matchesMode = true;
+      if (modeFilter === 'Cooling') {
+        matchesMode = item.heatingCapacity === 0;
+      } else if (modeFilter === 'Heating') {
+        matchesMode = item.heatingCapacity > 0 && item.coolingCapacity < 50; // Simple logic for dedicated heat pumps
+      } else if (modeFilter === 'HeatPump') {
+        matchesMode = item.heatingCapacity > 0;
+      }
+
+      // New Temperature range Filter
+      let matchesTemp = true;
+      if (minTempFilter !== '') {
+        matchesTemp = matchesTemp && item.minFluidTemp <= parseFloat(minTempFilter);
+      }
+      if (maxTempFilter !== '') {
+        matchesTemp = matchesTemp && item.maxFluidTemp >= parseFloat(maxTempFilter);
+      }
+
       // Intelligent Filter Logic
       let matchesIntelligent = true;
       if (intelligentFilterEnabled) {
-        // Broad range (+50% / -20%) to ensure results appear but are relevant
         const capacityRange = [project.peakPower * 0.7, project.peakPower * 1.5];
         const fluidRange = [item.minFluidTemp, item.maxFluidTemp];
         
@@ -128,9 +149,9 @@ const App: React.FC = () => {
           project.targetTemperature <= fluidRange[1];
       }
 
-      return matchesBrand && matchesRefr && matchesComp && matchesSearch && matchesIntelligent;
+      return matchesBrand && matchesRefr && matchesComp && matchesSearch && matchesIntelligent && matchesMode && matchesTemp;
     });
-  }, [brandFilter, refrigerantFilter, compressorFilter, searchTerm, intelligentFilterEnabled, project.peakPower, project.targetTemperature]);
+  }, [brandFilter, refrigerantFilter, compressorFilter, searchTerm, intelligentFilterEnabled, project.peakPower, project.targetTemperature, modeFilter, minTempFilter, maxTempFilter]);
 
   const selectedUnits = useMemo(() => OEM_DATABASE.filter(e => project.selectedEquipmentIds.includes(e.id)), [project.selectedEquipmentIds]);
 
@@ -223,10 +244,9 @@ const App: React.FC = () => {
       try {
         const text = e.target?.result as string;
         const loadedProject = JSON.parse(text) as ProjectData;
-        // Basic validation - check if it looks like a project
         if (loadedProject.projectName) {
           setProject(loadedProject);
-          setActiveTab('config'); // Jump to config to see loaded data
+          setActiveTab('config');
         } else {
           alert("Ficheiro de projeto inválido.");
         }
@@ -235,7 +255,6 @@ const App: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    // Reset the input value to allow opening the same file again if needed
     event.target.value = '';
   };
 
@@ -325,7 +344,6 @@ const App: React.FC = () => {
     );
   };
 
-  // Selection Sheet Exports
   const handleExportDOC = () => {
     if (!selectionSheetRef.current) return;
     const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'></head><body>`;
@@ -383,11 +401,9 @@ const App: React.FC = () => {
       onSave={handleSaveJSON}
     >
       
-      {/* Hidden File Inputs */}
       <input type="file" ref={projectFileInputRef} onChange={handleOpenProjectJSON} className="hidden" accept=".json" />
       <input type="file" ref={fileInputRef} onChange={handleImportCSV} className="hidden" accept=".csv" />
 
-      {/* Global Modals */}
       {viewingEquipmentId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">
           <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-2xl p-10 relative">
@@ -650,7 +666,6 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          {/* New Load Analysis Note Section */}
           <div className="bg-white p-12 rounded-[50px] border shadow-2xl space-y-10 animate-in fade-in slide-in-from-bottom-6">
             <div className="flex flex-col md:flex-row justify-between items-start gap-8 border-b pb-8">
               <div className="flex-1 space-y-4">
@@ -733,27 +748,55 @@ const App: React.FC = () => {
           </header>
 
           {showAdvancedFilters && (
-            <div className="bg-white p-10 rounded-[40px] border shadow-2xl grid grid-cols-1 md:grid-cols-3 gap-8 animate-in slide-in-from-top-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400">Marca</label>
-                <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
-                  <option value="All">Todas as Marcas</option>
-                  {BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
-                </select>
+            <div className="bg-white p-10 rounded-[40px] border shadow-2xl space-y-8 animate-in slide-in-from-top-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Marca</label>
+                  <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                    <option value="All">Todas as Marcas</option>
+                    {BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Refrigerante</label>
+                  <select value={refrigerantFilter} onChange={e => setRefrigerantFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                    <option value="All">Todos os Fluidos</option>
+                    {Object.values(Refrigerant).map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Compressor</label>
+                  <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                    <option value="All">Todos os Compressores</option>
+                    {Object.values(CompressorType).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400">Refrigerante</label>
-                <select value={refrigerantFilter} onChange={e => setRefrigerantFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
-                  <option value="All">Todos os Fluidos</option>
-                  {Object.values(Refrigerant).map(r => <option key={r} value={r}>{r}</option>)}
-                </select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black uppercase text-slate-400">Compressor</label>
-                <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
-                  <option value="All">Todos os Compressores</option>
-                  {Object.values(CompressorType).map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4 border-t border-slate-100">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Modo de Operação</label>
+                  <select value={modeFilter} onChange={e => setModeFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                    <option value="All">Todos (Cool & Heat)</option>
+                    <option value="Cooling">Só Frio (Cool)</option>
+                    <option value="Heating">Só Calor (Heat)</option>
+                    <option value="HeatPump">Bomba Calor (Reversível)</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Temp. Fluido Mínima (ºC)</label>
+                  <div className="relative">
+                    <ThermometerSnowflake className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400" size={18} />
+                    <input type="number" value={minTempFilter} onChange={e => setMinTempFilter(e.target.value)} placeholder="Min ºC" className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-bold" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Temp. Fluido Máxima (ºC)</label>
+                  <div className="relative">
+                    <Flame className="absolute left-4 top-1/2 -translate-y-1/2 text-red-400" size={18} />
+                    <input type="number" value={maxTempFilter} onChange={e => setMaxTempFilter(e.target.value)} placeholder="Max ºC" className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-bold" />
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -998,7 +1041,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
                   
-                  {/* Added Investment Value above Certification Seal */}
                   <div className="p-6 bg-slate-900 text-white rounded-2xl flex justify-between items-center shadow-lg">
                     <div className="flex items-center gap-3">
                        <Calculator className="text-blue-400" size={20} />
@@ -1016,7 +1058,6 @@ const App: React.FC = () => {
                 </section>
               </div>
 
-              {/* Added Efficiency Curve Section */}
               <div className="mt-12 space-y-6">
                 <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Curva de Eficiência vs Carga Partilhada</h3>
                 <div className="grid grid-cols-3 gap-8 items-center bg-slate-50 p-8 rounded-3xl border border-slate-100">
