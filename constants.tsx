@@ -1,7 +1,8 @@
 
 import { OEMEquipment, Refrigerant, CompressorType, CondensationType, EquipmentType } from './types';
 
-const BRANDS = ['Carrier', 'Daikin', 'Mitsubishi', 'Trane', 'AERMEC', 'Systemair'];
+// Exported brands to be used in filtering and UI
+export const BRANDS = ['Carrier', 'Daikin', 'Mitsubishi', 'Trane', 'AERMEC', 'Systemair'];
 
 const generateMockData = (): OEMEquipment[] => {
   const data: OEMEquipment[] = [];

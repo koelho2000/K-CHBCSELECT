@@ -1,6 +1,5 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-// Import GoogleGenAI from @google/genai
 import { GoogleGenAI } from "@google/genai";
 import Layout from './components/Layout';
 import { 
@@ -15,53 +14,50 @@ import {
   OEM_DATABASE, 
   DEFAULT_WEEKDAY_LOAD, 
   DEFAULT_WEEKEND_LOAD,
-  STANDARD_PROFILES
+  STANDARD_PROFILES,
+  BRANDS
 } from './constants';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
-  ResponsiveContainer, AreaChart, Area, BarChart, Bar, ScatterChart, Scatter, Legend, ReferenceLine
+  ResponsiveContainer, AreaChart, Area, ReferenceLine,
+  BarChart, Bar, Cell, Legend
 } from 'recharts';
-import { generateTechnicalReport, suggestEquipment } from './services/geminiService';
+import { generateTechnicalReport } from './services/geminiService';
 import { 
   Plus, Trash2, ChevronRight, Cpu, Wind, Thermometer, 
   TrendingUp, FileText, Printer, Sparkles, Download, 
   Layers, Search, Filter, RefreshCw, Upload, Calendar, 
   Activity, Info, Scale, CheckCircle2, AlertCircle,
   Database, ArrowUpRight, Gauge, Briefcase, Globe,
-  Settings, Droplets, Sun, Snowflake, Zap, MapPin, Building2, User, Table, LayoutGrid, Clock, FileDown, FileUp, ListChecks, Copy, FileCode, FileType, Check, Wand2, Eye, X, Award, CheckCircle, Calculator, SlidersHorizontal, Sparkle
+  Settings, Droplets, Sun, Snowflake, Zap, MapPin, Building2, User, Table, LayoutGrid, Clock, FileDown, FileUp, ListChecks, Copy, FileCode, FileType, Check, Wand2, Eye, X, Award, CheckCircle, Calculator, SlidersHorizontal, ChevronLeft,
+  BarChart2, Star, ClipboardList, FileOutput, Share2, Lightbulb
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('home');
-  const [dailyEditMode, setDailyEditMode] = useState<'graph' | 'table'>('graph');
   const [copySuccess, setCopySuccess] = useState(false);
   const [viewingEquipmentId, setViewingEquipmentId] = useState<string | null>(null);
   const [selectedReportUnitId, setSelectedReportUnitId] = useState<string | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [comparisonAnalysis, setComparisonAnalysis] = useState<string | null>(null);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [intelligentFilterEnabled, setIntelligentFilterEnabled] = useState(false);
+  const [intelligentFilterEnabled, setIntelligentFilterEnabled] = useState(true);
+  
+  const [isAnalyzingLoads, setIsAnalyzingLoads] = useState(false);
+  const [loadAnalysisAI, setLoadAnalysisAI] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
-  
-  // Filters
-  const [brandFilter, setBrandFilter] = useState<string>('All');
-  const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
-  const [compressorFilter, setCompressorFilter] = useState<string>('All');
-  const [condensationFilter, setCondensationFilter] = useState<string>('All');
-  const [typeFilter, setTypeFilter] = useState<string>('All');
-  const [modeFilter, setModeFilter] = useState<'Both' | 'Cooling' | 'Heating'>('Both');
-  const [capacityRange, setCapacityRange] = useState<[number, number]>([0, 5000]);
-  const [tempFluidRange, setTempFluidRange] = useState<[number, number]>([-20, 90]);
-  const [searchTerm, setSearchTerm] = useState('');
+  const selectionSheetRef = useRef<HTMLDivElement>(null);
   
   const [project, setProject] = useState<ProjectData>({
     projectName: 'Projecto K-CHBC',
+    workReference: 'FO-00-00',
     clientName: 'Cliente Industrial',
     installationName: 'Instalação Norte',
-    technicianName: 'Eng. Técnico Especialista',
-    companyName: 'Koelho2000 HVAC Solutions',
+    technicianName: 'José Coelho (PQ00851 | OET 2321)',
+    companyName: 'Koelho2000 Engenharia',
+    auditCompany: 'K2000 Auditoria',
     location: 'Lisboa, Portugal',
     equipmentType: EquipmentType.AIR_COOLED_CHILLER,
     refrigerant: Refrigerant.R134a,
@@ -77,7 +73,7 @@ const App: React.FC = () => {
       weekend: [...DEFAULT_WEEKEND_LOAD]
     },
     weeklyProfile: [1, 1, 1, 1, 1, 0.4, 0.2],
-    monthlyProfile: Array(12).fill(1), // Default flat monthly profile
+    monthlyProfile: [0.6, 0.5, 0.7, 0.8, 0.9, 1.0, 1.0, 0.9, 0.8, 0.7, 0.6, 0.5],
     budget: 0,
     instrumentation: ['Sonda Temp PT100', 'Fluxostato'],
     valves: ['Válvula de 3 vias', 'Válvula de equilíbrio'],
@@ -85,75 +81,79 @@ const App: React.FC = () => {
   });
 
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
-  const [isSuggesting, setIsSuggesting] = useState(false);
   const [generatedReport, setGeneratedReport] = useState<string | null>(null);
 
-  const brands = useMemo(() => ['All', ...new Set(OEM_DATABASE.map(item => item.brand))], []);
-  const refrigerants = useMemo(() => ['All', ...Object.values(Refrigerant)], []);
-  const compressors = useMemo(() => ['All', ...Object.values(CompressorType)], []);
-  const condensationTypes = useMemo(() => ['All', ...Object.values(CondensationType)], []);
-  const equipmentTypesList = useMemo(() => ['All', ...Object.values(EquipmentType)], []);
+  // Filters state
+  const [brandFilter, setBrandFilter] = useState<string>('All');
+  const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
+  const [compressorFilter, setCompressorFilter] = useState<string>('All');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const stats = useMemo(() => {
     const loads = project.hourlyLoads;
-    const max = Math.max(...loads);
-    const min = loads.length > 0 ? Math.min(...loads.filter(l => l > 0)) : 0;
+    const max = Math.max(...loads) || 0;
     const sum = loads.reduce((a, b) => a + b, 0);
     const avg = sum / (loads.length || 1);
     const energy = sum / 1000;
     const fullLoadHours = max > 0 ? sum / max : 0;
     const loadFactor = max > 0 ? (avg / max) * 100 : 0;
-    return { max, min, avg, energy, fullLoadHours, loadFactor };
+    return { max, avg, energy, fullLoadHours, loadFactor };
   }, [project.hourlyLoads]);
 
   const filteredOEMDatabase = useMemo(() => {
-    const isHeatingMode = project.targetTemperature > 20; // Assume >20C is heating selection
-    const smartRange = [stats.max * 0.9, stats.max * 1.1];
-    
     return OEM_DATABASE.filter(item => {
+      // Basic Filters
       const matchesBrand = brandFilter === 'All' || item.brand === brandFilter;
       const matchesRefr = refrigerantFilter === 'All' || item.refrigerant === refrigerantFilter;
       const matchesComp = compressorFilter === 'All' || item.compressorType === compressorFilter;
-      const matchesCond = condensationFilter === 'All' || item.condensationType === condensationFilter;
-      const matchesType = typeFilter === 'All' || item.id.includes(typeFilter.toLowerCase().replace(/\s/g, '-'));
-      
-      const cap = isHeatingMode ? item.heatingCapacity : item.coolingCapacity;
-      
-      // If intelligent filter is on:
-      // 1. Capacity within 10% of REAL PEAK
-      // 2. Target Temperature within equipment's supported fluid range
-      // 3. Proper mode (Heating capacity > 0 if heating, etc.)
-      const matchesIntelligent = !intelligentFilterEnabled || (
-        cap >= smartRange[0] && 
-        cap <= smartRange[1] &&
-        project.targetTemperature >= item.minFluidTemp &&
-        project.targetTemperature <= item.maxFluidTemp &&
-        (isHeatingMode ? item.heatingCapacity > 0 : item.coolingCapacity > 0)
-      );
+      const matchesSearch = searchTerm === '' || 
+        item.model.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        item.brand.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesCapacity = intelligentFilterEnabled ? true : (cap >= capacityRange[0] && cap <= capacityRange[1]);
-      
-      const matchesMode = modeFilter === 'Both' || (modeFilter === 'Cooling' && item.coolingCapacity > 0) || (modeFilter === 'Heating' && item.heatingCapacity > 0);
-      const matchesTemp = (item.minFluidTemp <= tempFluidRange[1] && item.maxFluidTemp >= tempFluidRange[0]);
-      
-      const searchLower = searchTerm.toLowerCase();
-      const matchesSearch = searchTerm === '' || [item.model, item.brand, item.refrigerant, item.compressorType, item.condensationType, item.dimensions].some(val => val.toString().toLowerCase().includes(searchLower));
-      
-      return matchesBrand && matchesRefr && matchesComp && matchesCond && matchesType && matchesIntelligent && matchesCapacity && matchesMode && matchesTemp && matchesSearch;
+      // Intelligent Filter Logic
+      let matchesIntelligent = true;
+      if (intelligentFilterEnabled) {
+        // Broad range (+50% / -20%) to ensure results appear but are relevant
+        const capacityRange = [project.peakPower * 0.7, project.peakPower * 1.5];
+        const fluidRange = [item.minFluidTemp, item.maxFluidTemp];
+        
+        const isHeatingMode = project.targetTemperature > 25;
+        const capacityToCompare = isHeatingMode ? item.heatingCapacity : item.coolingCapacity;
+        
+        matchesIntelligent = 
+          capacityToCompare >= capacityRange[0] && 
+          capacityToCompare <= capacityRange[1] &&
+          project.targetTemperature >= fluidRange[0] &&
+          project.targetTemperature <= fluidRange[1];
+      }
+
+      return matchesBrand && matchesRefr && matchesComp && matchesSearch && matchesIntelligent;
     });
-  }, [brandFilter, refrigerantFilter, compressorFilter, condensationFilter, typeFilter, capacityRange, modeFilter, tempFluidRange, searchTerm, intelligentFilterEnabled, stats.max, project.targetTemperature]);
+  }, [brandFilter, refrigerantFilter, compressorFilter, searchTerm, intelligentFilterEnabled, project.peakPower, project.targetTemperature]);
 
   const selectedUnits = useMemo(() => OEM_DATABASE.filter(e => project.selectedEquipmentIds.includes(e.id)), [project.selectedEquipmentIds]);
 
-  const toggleEquipmentSelection = useCallback((id: string) => {
+  const toggleEquipmentSelection = (id: string) => {
     setProject(prev => {
       const isSelected = prev.selectedEquipmentIds.includes(id);
       const newIds = isSelected ? prev.selectedEquipmentIds.filter(itemId => itemId !== id) : [...prev.selectedEquipmentIds, id];
       return { ...prev, selectedEquipmentIds: newIds };
     });
+  };
+
+  const applyStandardProfile = useCallback((index: number) => {
+    const profile = STANDARD_PROFILES[index];
+    if (!profile) return;
+    setProject(prev => ({
+      ...prev,
+      loadDefinitionMode: 'Profiles',
+      dailyProfiles: { weekday: [...profile.weekday], weekend: [...profile.weekend] },
+      weeklyProfile: [...profile.weekly],
+      monthlyProfile: [...profile.monthly]
+    }));
   }, []);
 
-  const generateYearlyLoadFromProfiles = useCallback(() => {
+  const generateYearlyLoadFromProfiles = () => {
     const newLoads = new Array(8760).fill(0);
     for (let month = 0; month < 12; month++) {
       const monthDays = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month];
@@ -172,53 +172,7 @@ const App: React.FC = () => {
         }
       }
     }
-    setProject(prev => ({ ...prev, hourlyLoads: newLoads, loadDefinitionMode: 'Profiles' }));
-  }, [project.peakPower, project.dailyProfiles, project.weeklyProfile, project.monthlyProfile]);
-
-  const updateProfileValue = (type: 'weekday' | 'weekend' | 'weekly' | 'monthly', index: number, value: number) => {
-    setProject(prev => {
-      const next = JSON.parse(JSON.stringify(prev));
-      if (type === 'weekday') next.dailyProfiles.weekday[index] = value;
-      if (type === 'weekend') next.dailyProfiles.weekend[index] = value;
-      if (type === 'weekly') next.weeklyProfile[index] = value;
-      if (type === 'monthly') next.monthlyProfile[index] = value;
-      return next;
-    });
-  };
-
-  const applyStandardProfile = (index: number) => {
-    const profile = STANDARD_PROFILES[index];
-    setProject(prev => ({
-      ...prev,
-      dailyProfiles: { weekday: [...profile.weekday], weekend: [...profile.weekend] },
-      weeklyProfile: [...profile.weekly],
-      monthlyProfile: [...profile.monthly],
-      loadDefinitionMode: 'Profiles'
-    }));
-  };
-
-  const handleSaveJSON = useCallback(() => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(project));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${project.projectName.replace(/\s+/g, '_')}_project.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-  }, [project]);
-
-  const handleExportCSV = () => {
-    let csvContent = "data:text/csv;charset=utf-8,Hora,Carga (kW)\n";
-    project.hourlyLoads.forEach((load, index) => {
-      csvContent += `${index},${load.toFixed(2)}\n`;
-    });
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `${project.projectName.replace(/\s+/g, '_')}_8760h.csv`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    setProject(prev => ({ ...prev, hourlyLoads: newLoads }));
   };
 
   const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -237,861 +191,28 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleCopyToClipboard = async () => {
-    if (generatedReport) {
-      try {
-        await navigator.clipboard.writeText(generatedReport);
-        setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000);
-      } catch (err) {
-        console.error("Erro ao copiar:", err);
-      }
-    }
-  };
-
-  const handleExportHTML = () => {
-    if (!generatedReport) return;
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>Relatório - ${project.projectName}</title>
-        <style>
-          body { font-family: sans-serif; line-height: 1.6; padding: 40px; color: #334155; }
-          h1, h2, h3 { color: #1e293b; }
-          table { width: 100%; border-collapse: collapse; margin: 20px 0; }
-          th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: left; }
-          th { background-color: #f8fafc; font-weight: bold; }
-        </style>
-      </head>
-      <body>
-        ${generatedReport.replace(/\n/g, '<br/>')}
-      </body>
-      </html>
-    `;
-    const blob = new Blob([htmlContent], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${project.projectName.replace(/\s+/g, '_')}_Relatorio.html`;
+  const handleExport8760CSV = () => {
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + "Hour,Load_kW\n" 
+      + project.hourlyLoads.map((v, i) => `${i + 1},${v.toFixed(2)}`).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `8760h_load_profile_${project.projectName.replace(/\s+/g, '_')}.csv`);
+    document.body.appendChild(link);
     link.click();
+    link.remove();
   };
 
-  const handleGenerateComparisonAnalysis = async () => {
-    setIsComparing(true);
-    setComparisonAnalysis(null);
-    try {
-      const reportUnit = selectedUnits.find(u => u.id === selectedReportUnitId) || selectedUnits[0];
-      const analysisPrompt = `Aja como um engenheiro consultor HVAC. Analise estes ${selectedUnits.length} equipamentos para o projeto ${project.projectName}.
-      Requisitos: Pico ${project.peakPower}kW, Temp saída ${project.targetTemperature}C.
-      
-      Equipamentos:
-      ${selectedUnits.map(u => `- ${u.brand} ${u.model}: ESEER ${u.eseer.toFixed(2)}, Cap ${u.coolingCapacity.toFixed(1)}kW, Preço ${u.price}€`).join('\n')}
-      
-      Forneça uma breve análise técnica (máx 150 palavras) comparando-os e sugerindo qual é a melhor opção global baseada em eficiência e custo. Responda em Português de Portugal.`;
-
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: analysisPrompt
-      });
-      setComparisonAnalysis(response.text);
-    } catch (error) {
-      setComparisonAnalysis("Erro ao gerar análise técnica comparativa.");
-    } finally {
-      setIsComparing(false);
-    }
+  const handleSaveJSON = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(project, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", `project_hvac_${project.projectName.replace(/\s+/g, '_')}.json`);
+    document.body.appendChild(downloadAnchorNode);
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
   };
-
-  const renderEquipmentModal = () => {
-    const equip = OEM_DATABASE.find(e => e.id === viewingEquipmentId);
-    if (!equip) return null;
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-        <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95">
-          <div className="p-8 border-b border-slate-100 flex justify-between items-center">
-            <div>
-              <h3 className="text-2xl font-black text-slate-900">{equip.brand} {equip.model}</h3>
-              <p className="text-slate-500 font-medium">Especificações Técnicas Completas</p>
-            </div>
-            <button onClick={() => setViewingEquipmentId(null)} className="p-2 hover:bg-slate-100 rounded-full transition text-slate-400">
-              <X size={24} />
-            </button>
-          </div>
-          
-          <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-              <div className="space-y-8">
-                <section>
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Dados Operacionais</h4>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-slate-50 p-4 rounded-2xl">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase">Resfriamento</div>
-                      <div className="text-lg font-black">{equip.coolingCapacity.toFixed(2)} kW</div>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase">Aquecimento</div>
-                      <div className="text-lg font-black">{equip.heatingCapacity.toFixed(2)} kW</div>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase">ESEER</div>
-                      <div className="text-lg font-black text-emerald-600">{equip.eseer.toFixed(2)}</div>
-                    </div>
-                    <div className="bg-slate-50 p-4 rounded-2xl">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase">COP</div>
-                      <div className="text-lg font-black text-blue-600">{equip.cop.toFixed(2)}</div>
-                    </div>
-                  </div>
-                </section>
-                
-                <section>
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Componentes & Físico</h4>
-                  <div className="space-y-3">
-                    <div className="flex justify-between py-2 border-b border-slate-50">
-                      <span className="text-sm text-slate-500">Compressor</span>
-                      <span className="text-sm font-bold">{equip.compressorType}</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-slate-50">
-                      <span className="text-sm text-slate-500">Fluido Frigorigéneo</span>
-                      <span className="text-sm font-bold">{equip.refrigerant}</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-slate-50">
-                      <span className="text-sm text-slate-500">Dimensões (LxPxA)</span>
-                      <span className="text-sm font-bold">{equip.dimensions} mm</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b border-slate-50">
-                      <span className="text-sm text-slate-500">Peso</span>
-                      <span className="text-sm font-bold">{equip.weight.toLocaleString()} kg</span>
-                    </div>
-                    <div className="flex justify-between py-2">
-                      <span className="text-sm text-slate-500">Nível Sonoro</span>
-                      <span className="text-sm font-bold">{equip.noiseLevel} dB(A)</span>
-                    </div>
-                  </div>
-                </section>
-              </div>
-              
-              <div className="space-y-8">
-                <section>
-                  <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Curva de Eficiência (Carga Parcial)</h4>
-                  <div className="h-48 bg-slate-50 rounded-3xl p-4">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={equip.efficiencyCurve}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis dataKey="x" stroke="#94a3b8" fontSize={10} label={{ value: '% Carga', position: 'insideBottom', offset: -5 }} />
-                        <YAxis stroke="#94a3b8" fontSize={10} />
-                        <Tooltip />
-                        <Line type="monotone" dataKey="y" stroke="#3b82f6" strokeWidth={3} dot={{ r: 4 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                </section>
-                
-                <section className="bg-blue-600 rounded-3xl p-6 text-white shadow-xl shadow-blue-600/20">
-                  <div className="flex items-center gap-3 mb-2">
-                    <Zap size={20} />
-                    <span className="text-[10px] font-black uppercase tracking-widest opacity-80">Preço Estimado</span>
-                  </div>
-                  <div className="text-4xl font-black">{equip.price.toLocaleString('pt-PT')} €</div>
-                  <p className="text-[10px] mt-4 opacity-70 leading-tight">Valor indicativo para fornecimento base. Não inclui custos de instalação, transporte ou acessórios de instrumentação adicionais.</p>
-                </section>
-              </div>
-            </div>
-          </div>
-          
-          <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-end gap-4">
-            <button 
-              onClick={() => { toggleEquipmentSelection(equip.id); setViewingEquipmentId(null); }}
-              className={`px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all ${project.selectedEquipmentIds.includes(equip.id) ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
-            >
-              {project.selectedEquipmentIds.includes(equip.id) ? 'Remover da Seleção' : 'Adicionar à Seleção'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderHome = () => (
-    <div className="space-y-12 animate-in fade-in duration-700">
-      <div className="flex flex-col md:flex-row justify-between items-center gap-8">
-        <div className="flex-1 space-y-4">
-          <div className="inline-flex items-center px-3 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-bold uppercase tracking-widest">
-            <Sparkles size={14} className="mr-2" /> Powered by Gemini
-          </div>
-          <h2 className="text-6xl font-black text-slate-900 leading-tight">
-            Design de Sistemas <span className="text-blue-600">HVAC</span> de Próxima Geração.
-          </h2>
-          <p className="text-xl text-slate-500 max-w-2xl leading-relaxed">
-            Configure cargas térmicas, selecione equipamentos OEM e gere relatórios técnicos automatizados com inteligência artificial.
-          </p>
-          <div className="flex gap-4 pt-4">
-            <button onClick={() => setActiveTab('config')} className="px-8 py-4 bg-slate-900 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-slate-800 transition shadow-xl shadow-slate-900/20">
-              Começar Projecto <ChevronRight size={20} />
-            </button>
-            <button onClick={() => setActiveTab('selection')} className="px-8 py-4 bg-white border border-slate-200 text-slate-700 rounded-2xl font-bold flex items-center gap-2 hover:bg-slate-50 transition">
-              Catálogo OEM
-            </button>
-          </div>
-        </div>
-        <div className="flex-1 relative">
-          <div className="w-full aspect-square bg-gradient-to-br from-blue-50 to-indigo-100 rounded-[80px] flex items-center justify-center overflow-hidden">
-             <Layers size={200} className="text-blue-200 absolute -bottom-10 -right-10" />
-             <Cpu size={120} className="text-blue-500/20 absolute top-10 left-10" />
-             <div className="z-10 bg-white p-8 rounded-[40px] shadow-2xl border border-blue-50 max-w-xs scale-110">
-               <div className="flex items-center gap-4 mb-6">
-                 <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-600/30">
-                   <Activity size={24} />
-                 </div>
-                 <div>
-                   <div className="text-[10px] font-black text-slate-400 uppercase">Estado do Projecto</div>
-                   <div className="font-bold text-slate-900">Configuração Inicial</div>
-                 </div>
-               </div>
-               <div className="space-y-4">
-                 <div className="flex justify-between items-center">
-                   <span className="text-xs text-slate-500">Unidades Selecionadas</span>
-                   <span className="text-sm font-black text-blue-600">{project.selectedEquipmentIds.length}</span>
-                 </div>
-                 <div className="flex justify-between items-center">
-                   <span className="text-xs text-slate-500">Carga de Pico</span>
-                   <span className="text-sm font-black text-slate-900">{project.peakPower} kW</span>
-                 </div>
-                 <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">
-                   <div className="h-full bg-blue-600 rounded-full" style={{ width: '35%' }}></div>
-                 </div>
-               </div>
-             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderConfig = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4">
-      <header>
-        <h2 className="text-4xl font-black text-slate-900">Definições do Projecto</h2>
-        <p className="text-slate-500">Dados administrativos e de localização para emissão de relatório.</p>
-      </header>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm space-y-6">
-          <h3 className="text-lg font-black flex items-center gap-2"><Briefcase className="text-blue-500" /> Entidade e Técnico</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Empresa Responsável</label>
-              <div className="relative">
-                <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input type="text" value={project.companyName} onChange={e => setProject({...project, companyName: e.target.value})} className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500" />
-              </div>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Técnico Projectista</label>
-              <div className="relative">
-                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input type="text" value={project.technicianName} onChange={e => setProject({...project, technicianName: e.target.value})} className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm space-y-6">
-          <h3 className="text-lg font-black flex items-center gap-2"><MapPin className="text-indigo-500" /> Localização e Projecto</h3>
-          <div className="space-y-4">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nome do Projecto</label>
-              <input type="text" value={project.projectName} onChange={e => setProject({...project, projectName: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nome da Instalação</label>
-              <input type="text" value={project.installationName} onChange={e => setProject({...project, installationName: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500" />
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Localização / Morada</label>
-              <div className="relative">
-                <Globe className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                <input type="text" value={project.location} onChange={e => setProject({...project, location: e.target.value})} className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:border-blue-500" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderLoads = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900">Modelação de Carga</h2>
-          <p className="text-slate-500">Defina os perfis de consumo e gere a simulação horária anual.</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-slate-50 transition">
-            <FileUp size={14} /> Importar CSV 8760h
-          </button>
-          <input type="file" ref={fileInputRef} onChange={handleImportCSV} accept=".csv" className="hidden" />
-          <button onClick={handleExportCSV} className="px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-slate-50 transition">
-            <FileDown size={14} /> Exportar CSV 8760h
-          </button>
-          <button onClick={() => setProject({...project, loadDefinitionMode: 'Profiles'})} className={`px-4 py-2 rounded-xl text-xs font-bold transition ${project.loadDefinitionMode === 'Profiles' ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600'}`}>Modo Perfil</button>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-              <ListChecks size={14} /> Catálogo de Perfis
-            </h3>
-            <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
-              {STANDARD_PROFILES.map((p, idx) => (
-                <button key={idx} onClick={() => applyStandardProfile(idx)} className="w-full text-left p-3 text-xs font-semibold text-slate-600 hover:bg-blue-50 hover:text-blue-600 rounded-xl transition border border-slate-50">
-                  {p.name}
-                </button>
-              ))}
-            </div>
-          </div>
-          
-          <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Configuração de Sistema</h3>
-            <div className="space-y-5">
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Potência Pico de Projeto (kW)</label>
-                <input type="number" value={project.peakPower} onChange={e => setProject({...project, peakPower: Number(e.target.value)})} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xl font-black text-blue-600 focus:border-blue-500 outline-none" />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase mb-2 block">Temperatura Pretendida (°C)</label>
-                <div className="relative">
-                  <Thermometer className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-300" size={20} />
-                  <input type="number" value={project.targetTemperature} onChange={e => setProject({...project, targetTemperature: Number(e.target.value)})} className="w-full p-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xl font-black text-indigo-600 focus:border-indigo-500 outline-none" />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-2 font-medium">A temperatura define o modo de operação (Arrefecimento vs Aquecimento) no Filtro Inteligente.</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900 p-6 rounded-3xl border border-slate-800 shadow-xl text-white">
-            <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-6">Estatísticas Calculadas</h3>
-            <table className="w-full text-xs font-medium">
-              <tbody className="divide-y divide-slate-800">
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Pico Real (kW)</td>
-                  <td className="text-blue-400 font-black">{stats.max.toFixed(1)}</td>
-                </tr>
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Mínimo (kW)</td>
-                  <td className="text-slate-300">{stats.min.toFixed(1)}</td>
-                </tr>
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Média (kW)</td>
-                  <td className="text-slate-300">{stats.avg.toFixed(1)}</td>
-                </tr>
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Energia (MWh)</td>
-                  <td className="text-emerald-400 font-black">{stats.energy.toFixed(2)}</td>
-                </tr>
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Fator Carga (%)</td>
-                  <td className="text-slate-300">{stats.loadFactor.toFixed(1)}</td>
-                </tr>
-                <tr className="py-2 flex justify-between">
-                  <td className="text-slate-500">Horas Pico (h)</td>
-                  <td className="text-slate-300">{stats.fullLoadHours.toFixed(0)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="lg:col-span-3 space-y-8">
-          <div className="bg-white p-8 rounded-[40px] border-4 border-blue-50 shadow-xl shadow-blue-500/5 flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-6">
-              <div className="w-16 h-16 bg-blue-600 rounded-3xl flex items-center justify-center text-white shadow-xl shadow-blue-600/30">
-                <Calculator size={32} />
-              </div>
-              <div>
-                <h3 className="text-2xl font-black text-slate-900">Gerar Perfil Completo</h3>
-                <p className="text-sm text-slate-500 leading-relaxed">
-                  Consolida o perfil <strong>Diário</strong>, <strong>Semanal</strong>, <strong>Mensal</strong> e <strong>Anual (8760h)</strong>.
-                </p>
-              </div>
-            </div>
-            <button 
-              onClick={generateYearlyLoadFromProfiles}
-              className="group px-10 py-5 bg-blue-600 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition active:scale-95 shadow-xl shadow-blue-600/20"
-            >
-              <RefreshCw size={20} className="group-hover:rotate-180 transition-transform duration-700" />
-              Executar Geração de Carga
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm flex flex-col">
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                    <Clock size={16} className="text-blue-500" /> Perfil Diário
-                  </h4>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Definição horária (%)</p>
-                </div>
-                <div className="flex bg-slate-100 p-1 rounded-xl">
-                  <button onClick={() => setDailyEditMode('graph')} className={`p-2 rounded-lg transition ${dailyEditMode === 'graph' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><LayoutGrid size={16} /></button>
-                  <button onClick={() => setDailyEditMode('table')} className={`p-2 rounded-lg transition ${dailyEditMode === 'table' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}><Table size={16} /></button>
-                </div>
-              </div>
-              
-              <div className="flex-1 space-y-8">
-                <div>
-                  <h5 className="text-[10px] font-black text-slate-400 uppercase mb-4 flex justify-between">
-                    <span>Dias de Semana (Seg-Sex)</span>
-                    <span className="text-blue-600">{Math.round(project.dailyProfiles.weekday.reduce((a, b) => a + b, 0) / 0.24)}% Média</span>
-                  </h5>
-                  {dailyEditMode === 'graph' ? (
-                    <div className="flex items-end gap-1 h-32">
-                      {project.dailyProfiles.weekday.map((val, i) => (
-                        <div key={i} className="flex-1 group relative h-full flex items-end">
-                          <div className="w-full bg-blue-500/20 hover:bg-blue-600 transition-colors rounded-t-sm cursor-pointer relative" style={{ height: `${val * 100}%` }}>
-                            <input type="range" min="0" max="1" step="0.05" value={val} onChange={e => updateProfileValue('weekday', i, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-6 gap-2 h-32 overflow-y-auto pr-2 custom-scrollbar">
-                      {project.dailyProfiles.weekday.map((val, i) => (
-                        <div key={i} className="flex flex-col gap-1">
-                          <span className="text-[8px] font-bold text-slate-400">{i}h</span>
-                          <input type="number" min="0" max="1" step="0.1" value={val} onChange={e => updateProfileValue('weekday', i, Number(e.target.value))} className="w-full p-1 bg-slate-50 border border-slate-100 rounded text-[10px] font-black" />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div>
-                  <h5 className="text-[10px] font-black text-slate-400 uppercase mb-4 flex justify-between">
-                    <span>Fim de Semana (Sáb-Dom)</span>
-                    <span className="text-slate-500">{Math.round(project.dailyProfiles.weekend.reduce((a, b) => a + b, 0) / 0.24)}% Média</span>
-                  </h5>
-                  <div className="flex items-end gap-1 h-32">
-                    {project.dailyProfiles.weekend.map((val, i) => (
-                      <div key={i} className="flex-1 group relative h-full flex items-end">
-                        <div className="w-full bg-slate-200 hover:bg-slate-400 transition-colors rounded-t-sm cursor-pointer relative" style={{ height: `${val * 100}%` }}>
-                          <input type="range" min="0" max="1" step="0.05" value={val} onChange={e => updateProfileValue('weekend', i, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-8">
-              <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-                <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                      <Calendar size={16} className="text-indigo-500" /> Perfil Semanal
-                    </h4>
-                  </div>
-                </div>
-                <div className="grid grid-cols-7 gap-3 h-24 mb-6">
-                  {['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day, i) => (
-                    <div key={i} className="flex flex-col items-center gap-2">
-                      <div className="flex-1 w-full bg-slate-50 rounded-xl relative flex items-end overflow-hidden group">
-                        <div className="w-full bg-indigo-500/20 group-hover:bg-indigo-500 transition-colors" style={{ height: `${project.weeklyProfile[i] * 100}%` }} />
-                        <input type="range" min="0" max="1" step="0.05" value={project.weeklyProfile[i]} onChange={e => updateProfileValue('weekly', i, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize" />
-                      </div>
-                      <span className="text-[9px] font-black text-slate-500">{day}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-                <div className="flex justify-between items-center mb-6">
-                  <div>
-                    <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-                      <Layers size={16} className="text-emerald-500" /> Perfil Mensal
-                    </h4>
-                  </div>
-                </div>
-                <div className="grid grid-cols-12 gap-1.5 h-24 mb-4">
-                  {['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].map((m, i) => (
-                    <div key={i} className="flex flex-col items-center gap-2">
-                      <div className="flex-1 w-full bg-slate-50 rounded-lg relative flex items-end overflow-hidden group">
-                        <div className="w-full bg-emerald-500/20 group-hover:bg-emerald-500 transition-colors" style={{ height: `${project.monthlyProfile[i] * 100}%` }} />
-                        <input type="range" min="0" max="1" step="0.05" value={project.monthlyProfile[i]} onChange={e => updateProfileValue('monthly', i, Number(e.target.value))} className="absolute inset-0 w-full h-full opacity-0 cursor-ns-resize" />
-                      </div>
-                      <span className="text-[8px] font-black text-slate-500">{m}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-900 p-8 rounded-[40px] shadow-2xl relative overflow-hidden h-64">
-                <div className="absolute top-0 right-0 p-6 text-blue-500/5"><TrendingUp size={100} /></div>
-                <div className="relative z-10 flex justify-between items-center mb-6">
-                  <h4 className="text-sm font-black text-white uppercase tracking-widest">Carga Anual (8760h)</h4>
-                  <div className="text-[10px] font-black text-slate-400 uppercase px-3 py-1 bg-slate-800 rounded-full">kW Anual</div>
-                </div>
-                <div className="h-32">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={project.hourlyLoads.map((v, i) => ({ h: i, v }))}>
-                      <Tooltip 
-                        labelFormatter={(val) => `Hora ${val}`} 
-                        contentStyle={{ background: '#0f172a', border: 'none', borderRadius: '12px', color: '#fff', fontSize: '10px' }} 
-                      />
-                      <Area type="monotone" dataKey="v" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} strokeWidth={1} />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="flex justify-between mt-4 text-[8px] font-bold text-slate-500 uppercase tracking-widest">
-                  <span>Jan</span><span>Mar</span><span>Mai</span><span>Jul</span><span>Set</span><span>Nov</span><span>Dez</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderSelection = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-8 rounded-[32px] border border-slate-100 shadow-sm">
-        <div className="flex-1">
-          <h2 className="text-3xl font-black text-slate-900">Catálogo OEM Global</h2>
-          <p className="text-slate-500">Consulte a base de dados de fabricantes líderes.</p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          {/* Smart Intelligent Filter Button */}
-          <button 
-            onClick={() => setIntelligentFilterEnabled(!intelligentFilterEnabled)}
-            disabled={stats.max <= 0}
-            className={`px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 transition-all shadow-lg active:scale-95 ${intelligentFilterEnabled ? 'bg-blue-600 text-white ring-4 ring-blue-100' : 'bg-white border border-slate-200 text-blue-600 hover:bg-blue-50'} disabled:opacity-40 disabled:cursor-not-allowed`}
-          >
-            <Sparkles size={16} className={intelligentFilterEnabled ? 'animate-pulse' : ''} /> 
-            Smart Filter {intelligentFilterEnabled ? 'ON' : 'OFF'}
-            {intelligentFilterEnabled && stats.max > 0 && (
-              <span className="ml-1 text-[10px] opacity-80">({(stats.max * 0.9).toFixed(0)}-{(stats.max * 1.1).toFixed(0)} kW @ {project.targetTemperature}°C)</span>
-            )}
-          </button>
-          
-          <button 
-            onClick={() => setShowAdvancedFilters(!showAdvancedFilters)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all ${showAdvancedFilters ? 'bg-slate-900 text-white' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-          >
-            <SlidersHorizontal size={16} /> Filtros {showAdvancedFilters ? 'Ocultar' : 'Mostrar'}
-          </button>
-          
-          <div className="relative w-full md:w-64">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input type="text" placeholder="Pesquisar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:border-blue-500 transition text-sm" />
-          </div>
-        </div>
-      </header>
-
-      {showAdvancedFilters && (
-        <div className="bg-white p-8 rounded-[32px] border border-slate-100 shadow-xl animate-in slide-in-from-top-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Fabricante</label>
-              <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                {brands.map(b => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Fluido Refrigerante</label>
-              <select value={refrigerantFilter} onChange={e => setRefrigerantFilter(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                {refrigerants.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Tipo de Compressor</label>
-              <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                {compressors.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Condensação</label>
-              <select value={condensationFilter} onChange={e => setCondensationFilter(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                {condensationTypes.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Tipo de Equipamento</label>
-              <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                {equipmentTypesList.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Modo Operação</label>
-              <select value={modeFilter} onChange={e => setModeFilter(e.target.value as any)} className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold focus:border-blue-500 outline-none">
-                <option value="Both">Resfriamento & Aquecimento</option>
-                <option value="Cooling">Só Resfriamento</option>
-                <option value="Heating">Só Aquecimento</option>
-              </select>
-            </div>
-            {!intelligentFilterEnabled && (
-              <div>
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Capacidade (kW)</label>
-                <div className="flex gap-2">
-                  <input type="number" placeholder="Min" value={capacityRange[0]} onChange={e => setCapacityRange([Number(e.target.value), capacityRange[1]])} className="w-1/2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none" />
-                  <input type="number" placeholder="Max" value={capacityRange[1]} onChange={e => setCapacityRange([capacityRange[0], Number(e.target.value)])} className="w-1/2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none" />
-                </div>
-              </div>
-            )}
-            <div>
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 block">Temp. Fluido (°C)</label>
-              <div className="flex gap-2">
-                <input type="number" placeholder="Min" value={tempFluidRange[0]} onChange={e => setTempFluidRange([Number(e.target.value), tempFluidRange[1]])} className="w-1/2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none" />
-                <input type="number" placeholder="Max" value={tempFluidRange[1]} onChange={e => setTempFluidRange([tempFluidRange[0], Number(e.target.value)])} className="w-1/2 p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none" />
-              </div>
-            </div>
-          </div>
-          <div className="mt-6 flex justify-end">
-             <button 
-              onClick={() => {
-                setBrandFilter('All');
-                setRefrigerantFilter('All');
-                setCompressorFilter('All');
-                setCondensationFilter('All');
-                setTypeFilter('All');
-                setModeFilter('Both');
-                setCapacityRange([0, 5000]);
-                setTempFluidRange([-20, 90]);
-                setSearchTerm('');
-                setIntelligentFilterEnabled(false);
-              }}
-              className="text-xs font-black text-blue-600 hover:text-blue-800 uppercase tracking-widest"
-             >
-               Limpar Todos os Filtros
-             </button>
-          </div>
-        </div>
-      )}
-
-      <div className="bg-white rounded-[40px] border border-slate-100 overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">Equipamento</th>
-              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Tecnologia</th>
-              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Capacidade</th>
-              <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Acções</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredOEMDatabase.map(item => (
-              <tr key={item.id} className="hover:bg-slate-50/80 transition-all group">
-                <td className="px-8 py-6">
-                  <div className="font-black text-slate-900">{item.brand}</div>
-                  <div className="text-xs text-slate-500 font-medium">{item.model}</div>
-                </td>
-                <td className="px-8 py-6 text-center">
-                  <div className="text-xs font-bold text-slate-700">{item.compressorType}</div>
-                  <div className="text-[10px] font-black text-blue-500 uppercase">{item.refrigerant}</div>
-                </td>
-                <td className="px-8 py-6 text-center">
-                  <div className="text-sm font-black text-blue-600">{item.coolingCapacity.toFixed(1)} <span className="text-[10px] text-slate-400">kW (C)</span></div>
-                  {item.heatingCapacity > 0 && <div className="text-[10px] font-black text-red-500">{item.heatingCapacity.toFixed(1)} kW (H)</div>}
-                </td>
-                <td className="px-8 py-6 text-right">
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => setViewingEquipmentId(item.id)} className="p-3 bg-white border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition" title="Ver Detalhes">
-                      <Eye size={18} />
-                    </button>
-                    <button onClick={() => toggleEquipmentSelection(item.id)} className={`px-6 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white'}`}>
-                      {project.selectedEquipmentIds.includes(item.id) ? 'Remover' : 'Seleccionar'}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {viewingEquipmentId && renderEquipmentModal()}
-    </div>
-  );
-
-  const renderAnalysis = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4">
-      <header>
-        <h2 className="text-4xl font-black text-slate-900">Análise Comparativa & Curvas</h2>
-        <p className="text-slate-500">Comparação detalhada de todas as variáveis técnicas e análise de eficiência.</p>
-      </header>
-
-      {selectedUnits.length === 0 ? (
-        <div className="bg-slate-100 p-20 rounded-[40px] text-center italic text-slate-400">Seleccione unidades no catálogo para ver o comparativo detalhado.</div>
-      ) : (
-        <div className="space-y-12">
-          <div className="bg-white rounded-[40px] border border-slate-200 overflow-x-auto shadow-sm">
-            <table className="w-full text-left text-sm border-collapse">
-              <thead>
-                <tr className="bg-slate-900 text-white">
-                  <th className="p-6 font-black uppercase tracking-widest text-[10px] border-r border-slate-800">Variável Técnica</th>
-                  {selectedUnits.map(u => (
-                    <th key={u.id} className={`p-6 text-center border-r border-slate-800 relative ${selectedReportUnitId === u.id ? 'bg-blue-800' : ''}`}>
-                      <div className="font-black text-base">{u.brand}</div>
-                      <div className="text-[10px] font-bold opacity-60 uppercase">{u.model}</div>
-                      <button 
-                        onClick={() => setSelectedReportUnitId(u.id)}
-                        className={`absolute -bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full text-[9px] font-black uppercase tracking-tighter shadow-lg transition-all ${selectedReportUnitId === u.id ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
-                      >
-                        {selectedReportUnitId === u.id ? <span className="flex items-center gap-1"><Check size={10}/> Relatório</span> : 'Seleccionar p/ Relatório'}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {[
-                  { label: 'Tipo de Condensação', key: 'condensationType', decimals: 0 },
-                  { label: 'Potência Resfriamento (kW)', key: 'coolingCapacity', decimals: 2 },
-                  { label: 'Potência Aquecimento (kW)', key: 'heatingCapacity', decimals: 2 },
-                  { label: 'ESEER (Sazonal)', key: 'eseer', decimals: 2, highlight: true },
-                  { label: 'EER (Plena Carga)', key: 'eer', decimals: 2 },
-                  { label: 'COP (Aquecimento)', key: 'cop', decimals: 2 },
-                  { label: 'Tipo de Compressor', key: 'compressorType', decimals: 0 },
-                  { label: 'Fluido Frigorigéneo', key: 'refrigerant', decimals: 0 },
-                  { label: 'Dimensões (LxPxA mm)', key: 'dimensions', decimals: 0 },
-                  { label: 'Peso em Operação (kg)', key: 'weight', decimals: 0 },
-                  { label: 'Pressão Sonora (dB-A)', key: 'noiseLevel', decimals: 1 },
-                  { label: 'Fluido: Temp Min/Max (°C)', custom: (u: OEMEquipment) => `${u.minFluidTemp} / ${u.maxFluidTemp}` },
-                  { label: 'Ambiente: Temp Min/Max (°C)', custom: (u: OEMEquipment) => `${u.minAmbientTemp} / ${u.maxAmbientTemp}` },
-                  { label: 'Investimento Estimado (€)', key: 'price', decimals: 2, highlight: true },
-                ].map((row, i) => (
-                  <tr key={i} className={`hover:bg-slate-50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/20'}`}>
-                    <td className="p-4 pl-8 font-bold text-slate-500 uppercase text-[9px] border-r border-slate-100">{row.label}</td>
-                    {selectedUnits.map(u => {
-                      let display;
-                      if (row.custom) {
-                        display = row.custom(u);
-                      } else {
-                        const val = u[row.key as keyof OEMEquipment];
-                        display = typeof val === 'number' ? val.toFixed(row.decimals) : val;
-                      }
-                      return (
-                        <td key={u.id} className={`p-4 text-center font-black text-slate-700 border-r border-slate-100 ${row.highlight ? 'text-blue-600 bg-blue-50/30' : ''}`}>
-                          {display}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="bg-white p-10 rounded-[40px] border border-slate-200 shadow-sm">
-              <div className="flex justify-between items-center mb-10">
-                <h3 className="text-xl font-black text-slate-900">Eficiência vs Carga (%)</h3>
-                <div className="flex gap-4">
-                  {selectedUnits.map((u, i) => (
-                    <div key={u.id} className="flex items-center gap-1">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: ['#3b82f6', '#ef4444', '#10b981', '#f59e0b'][i % 4] }}></div>
-                      <span className="text-[10px] font-bold text-slate-400">{u.brand}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis type="number" dataKey="x" name="Carga" domain={[0, 100]} label={{ value: '% Carga', position: 'bottom', offset: 0 }} />
-                    <YAxis label={{ value: 'Eficiência Relativa', angle: -90, position: 'insideLeft' }} />
-                    <Tooltip contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                    {selectedUnits.map((u, i) => (
-                      <Line key={u.id} type="monotone" data={u.efficiencyCurve} dataKey="y" name={u.model} stroke={['#3b82f6', '#ef4444', '#10b981', '#f59e0b'][i % 4]} strokeWidth={4} dot={{ r: 5 }} activeDot={{ r: 8 }} />
-                    ))}
-                    <ReferenceLine x={50} stroke="#94a3b8" strokeDasharray="3 3" label={{ position: 'top', value: 'Carga Média', fill: '#64748b', fontSize: 10 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 p-10 rounded-[40px] border border-slate-800 shadow-xl text-white">
-              <h3 className="text-xl font-black mb-10">Distribuição de Carga vs Capacidade</h3>
-              <div className="space-y-8">
-                {selectedUnits.map(u => {
-                  const coverage = (project.peakPower / u.coolingCapacity) * 100;
-                  return (
-                    <div key={u.id} className="space-y-2">
-                      <div className="flex justify-between text-xs font-bold uppercase tracking-widest text-slate-400">
-                        <span>{u.brand} {u.model}</span>
-                        <span className={coverage > 100 ? 'text-red-400' : 'text-emerald-400'}>{coverage.toFixed(1)}% de Utilização de Pico</span>
-                      </div>
-                      <div className="h-4 w-full bg-slate-800 rounded-full overflow-hidden">
-                        <div 
-                          className={`h-full transition-all duration-1000 ${coverage > 100 ? 'bg-red-500' : (coverage > 85 ? 'bg-amber-500' : 'bg-emerald-500')}`} 
-                          style={{ width: `${Math.min(coverage, 100)}%` }}
-                        ></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-10 rounded-[40px] border border-slate-200 shadow-lg animate-in fade-in duration-500">
-            <div className="flex flex-col md:flex-row justify-between items-center gap-8 mb-8">
-              <div className="flex items-center gap-6">
-                <div className="w-16 h-16 bg-blue-600 rounded-3xl flex items-center justify-center text-white shadow-xl shadow-blue-600/30">
-                  <Award size={32} />
-                </div>
-                <div>
-                  <h3 className="text-2xl font-black text-slate-900">Análise de Decisão IA</h3>
-                  <p className="text-slate-500">O Gemini analisa o desempenho relativo para encontrar a melhor solução global.</p>
-                </div>
-              </div>
-              <button 
-                onClick={handleGenerateComparisonAnalysis}
-                disabled={isComparing}
-                className="px-8 py-4 bg-slate-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest flex items-center gap-3 hover:bg-slate-800 transition active:scale-95 disabled:opacity-50"
-              >
-                {isComparing ? <RefreshCw size={20} className="animate-spin" /> : <Sparkles size={20} />}
-                {isComparing ? 'Analisando...' : 'Gerar Parecer Técnico'}
-              </button>
-            </div>
-
-            {comparisonAnalysis ? (
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
-                <div className="md:col-span-3 prose prose-slate max-w-none text-slate-600 leading-relaxed text-justify">
-                  {comparisonAnalysis}
-                </div>
-                <div className="md:col-span-1 bg-emerald-50 p-8 rounded-[32px] border border-emerald-100 flex flex-col items-center text-center">
-                  <CheckCircle size={48} className="text-emerald-500 mb-4" />
-                  <h4 className="text-sm font-black text-emerald-900 uppercase tracking-widest mb-2">Sugestão Técnica</h4>
-                  <div className="text-lg font-black text-emerald-700 mb-6">
-                    {selectedReportUnitId ? OEM_DATABASE.find(u => u.id === selectedReportUnitId)?.model : "Seleccione uma opção"}
-                  </div>
-                  <button 
-                    onClick={() => setActiveTab('report')}
-                    className="w-full py-3 bg-emerald-600 text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-emerald-700 transition shadow-lg shadow-emerald-600/20"
-                  >
-                    Prosseguir p/ Relatório
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="p-20 text-center border-2 border-dashed border-slate-100 rounded-[32px]">
-                <p className="text-slate-400 italic">Clique no botão "Gerar Parecer Técnico" para que a IA processe a comparação entre os equipamentos seleccionados.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
 
   const handleGenerateReport = async () => {
     setIsGeneratingReport(true);
@@ -1101,109 +222,874 @@ const App: React.FC = () => {
         ? [OEM_DATABASE.find(u => u.id === selectedReportUnitId)!] 
         : selectedUnits;
       const report = await generateTechnicalReport(project, reportUnits);
-      setGeneratedReport(report || "Falha ao gerar o relatório.");
+      setGeneratedReport(report);
     } catch (error) {
-      console.error(error);
-      setGeneratedReport("Erro ao gerar o relatório.");
+      setGeneratedReport("Erro na geração do relatório.");
     } finally {
       setIsGeneratingReport(false);
     }
   };
 
-  const renderReport = () => (
-    <div className="space-y-8 animate-in slide-in-from-bottom-4">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 no-print">
-        <div>
-          <h2 className="text-4xl font-black text-slate-900">Relatório Técnico IA</h2>
-          <p className="text-slate-500">Documentação profissional automatizada com análise avançada.</p>
-        </div>
-        <div className="flex gap-3">
-          {generatedReport && (
-            <>
-              <button onClick={handleExportHTML} title="Exportar HTML" className="p-4 bg-white border border-slate-200 text-slate-600 rounded-2xl hover:bg-slate-50 transition shadow-sm">
-                <FileCode size={20} />
-              </button>
-              <button onClick={handleCopyToClipboard} title="Copiar Tudo" className={`p-4 bg-white border border-slate-200 rounded-2xl transition shadow-sm ${copySuccess ? 'text-emerald-600' : 'text-slate-600 hover:bg-slate-50'}`}>
-                {copySuccess ? <Check size={20} /> : <Copy size={20} />}
-              </button>
-              <button onClick={() => window.print()} title="Imprimir PDF" className="p-4 bg-slate-900 text-white rounded-2xl hover:bg-slate-800 transition shadow-lg">
-                <Printer size={20} />
-              </button>
-            </>
-          )}
-          <button 
-            onClick={handleGenerateReport} 
-            disabled={isGeneratingReport || selectedUnits.length === 0} 
-            className="px-8 py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center gap-2 hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isGeneratingReport ? <RefreshCw className="animate-spin" size={20} /> : <Sparkles size={20} />}
-            {isGeneratingReport ? 'A analisar dados...' : (generatedReport ? 'Actualizar Relatório' : 'Gerar Relatório Profissional')}
-          </button>
-        </div>
-      </header>
+  const handleAnalyzeLoads = async () => {
+    if (stats.max === 0) return;
+    setIsAnalyzingLoads(true);
+    setLoadAnalysisAI(null);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const prompt = `Analise o perfil de carga térmica para o projeto "${project.projectName}".
+      DADOS:
+      - Pico: ${stats.max.toFixed(1)} kW
+      - Consumo Anual: ${stats.energy.toFixed(1)} MWh
+      - Load Factor: ${stats.loadFactor.toFixed(1)}%
+      - Variabilidade Semanal: ${project.weeklyProfile.join(', ')} (Seg-Dom)
+      - Variabilidade Mensal: ${project.monthlyProfile.join(', ')} (Jan-Dez)
+      Com base nesta estatística 8760h, sugira em 3 frases técnicas o tipo de tecnologia de compressão (Screw, Scroll, Turbocor, Centrifugal) e condensação ideal para maximizar o ROI e eficiência sazonal. Português (PT-PT).`;
+      const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+      setLoadAnalysisAI(response.text || "Análise indisponível.");
+    } catch (error) {
+      setLoadAnalysisAI("Erro técnico ao processar análise.");
+    } finally {
+      setIsAnalyzingLoads(false);
+    }
+  };
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Carga de Pico</div>
-          <div className="text-xl font-black text-slate-900">{stats.max.toFixed(2)} <span className="text-xs text-slate-400">kW</span></div>
+  const handleGenerateComparisonAnalysis = async () => {
+    if (selectedUnits.length < 2) {
+      setComparisonAnalysis("Selecione pelo menos 2 equipamentos para análise comparativa.");
+      return;
+    }
+    setIsComparing(true);
+    setComparisonAnalysis(null);
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const prompt = `Analise comparativamente os seguintes equipamentos HVAC para o projecto "${project.projectName}" em ${project.location}:
+      ${selectedUnits.map(u => `- ${u.brand} ${u.model}: ESEER ${u.eseer.toFixed(2)}, EER ${u.eer.toFixed(2)}, Preço ${u.price.toLocaleString('pt-PT')}€, Fluido ${u.refrigerant}`).join('\n')}
+      Forneça um parecer técnico em Português (PT-PT) sobre a melhor escolha baseada em eficiência e ROI. SEM Markdown.`;
+      const response = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt });
+      setComparisonAnalysis(response.text || "Análise indisponível.");
+    } catch (error) {
+      setComparisonAnalysis("Erro técnico ao processar análise.");
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
+  const reportPages = useMemo(() => {
+    if (!generatedReport) return [];
+    return generatedReport.split('[QUEBRA_DE_PAGINA]').map(p => p.trim()).filter(p => p.length > 0);
+  }, [generatedReport]);
+
+  const renderReportPage = (content: string, index: number) => {
+    const isCover = index === 0;
+    return (
+      <div key={index} className={`bg-white mx-auto shadow-2xl mb-12 relative p-[25mm] w-[210mm] min-h-[297mm] flex flex-col text-slate-800 font-serif leading-relaxed page-break ${isCover ? 'items-center justify-center text-center border-t-[12px] border-blue-600' : ''}`}>
+        <div className="flex-1 w-full overflow-hidden">
+          {content.split('\n').map((line, lIdx) => {
+            const trimmedLine = line.trim();
+            if (!trimmedLine) return <div key={lIdx} className="h-4" />;
+            const isTitle = trimmedLine.toUpperCase() === trimmedLine && trimmedLine.length > 3;
+            return (
+              <p key={lIdx} className={`${isTitle ? 'text-2xl font-black text-slate-900 mt-8 mb-6 border-b pb-2 uppercase font-sans' : 'text-[13px] mb-4 text-justify font-normal text-slate-700'}`}>
+                {trimmedLine}
+              </p>
+            );
+          })}
         </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Energia Estimada</div>
-          <div className="text-xl font-black text-blue-600">{stats.energy.toFixed(2)} <span className="text-xs text-slate-400">MWh/ano</span></div>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">ESEER Médio</div>
-          <div className="text-xl font-black text-emerald-600">{(selectedUnits.reduce((a, b) => a + b.eseer, 0) / (selectedUnits.length || 1)).toFixed(2)}</div>
-        </div>
-        <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
-          <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Investimento Est.</div>
-          <div className="text-xl font-black text-indigo-600">{selectedUnits.reduce((a, b) => a + b.price, 0).toLocaleString('pt-PT')} <span className="text-xs text-slate-400">€</span></div>
-        </div>
+        {!isCover && <div className="absolute bottom-[10mm] left-0 right-0 px-[25mm] flex justify-between text-[9px] text-slate-400 font-sans border-t pt-4"><span>KOELHO2000 - José Coelho (OET 2321)</span><span>Página {index + 1}</span></div>}
       </div>
+    );
+  };
 
-      {selectedUnits.length === 0 ? (
-        <div className="bg-amber-50 border border-amber-100 p-8 rounded-[40px] flex items-center gap-6">
-          <div className="w-16 h-16 bg-amber-500 rounded-3xl flex items-center justify-center text-white shadow-lg shadow-amber-500/30"><AlertCircle size={32} /></div>
-          <div><h4 className="text-xl font-black text-amber-900">Seleção Necessária</h4><p className="text-amber-700">Seleccione equipamentos no catálogo OEM antes de gerar o relatório técnico.</p></div>
-        </div>
-      ) : generatedReport ? (
-        <div className="bg-white p-8 md:p-16 rounded-[40px] border border-slate-200 shadow-2xl relative overflow-hidden print:p-0 print:shadow-none print:border-none">
-           <div className="hidden print:flex justify-between items-center mb-12 border-b-4 border-slate-900 pb-8">
-             <div>
-               <h1 className="text-3xl font-black text-slate-900">K-CHBCSELECT</h1>
-               <p className="text-sm font-bold text-slate-500">HVAC DESIGN SYSTEM</p>
-             </div>
-             <div className="text-right">
-               <div className="text-sm font-black uppercase text-slate-400">Koelho2000 Pro</div>
-               <div className="text-lg font-bold">Relatório de Seleção Técnica</div>
-             </div>
-           </div>
-           <div ref={reportRef} className="prose prose-slate max-w-none whitespace-pre-wrap font-serif text-slate-800 <leading-relaxed text-justify selection:bg-blue-100">
-             {generatedReport}
-           </div>
-           <div className="mt-16 pt-8 border-t border-slate-100 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest no-print">
-             <span>Gerado por {project.technicianName} via Koelho2000 Gemini AI</span>
-             <span>Versão 2.5.0 • Documento Confidencial</span>
-           </div>
-        </div>
-      ) : (
-        <div className="bg-slate-100/50 border-2 border-dashed border-slate-200 p-20 rounded-[40px] text-center no-print">
-          <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-6 text-slate-300 shadow-sm"><FileText size={40} /></div>
-          <h4 className="text-xl font-bold text-slate-400 mb-2">Relatório pronto a ser gerado</h4>
-          <p className="text-slate-400 max-w-sm mx-auto">A inteligência artificial irá consolidar todos os dados de carga, equipamentos seleccionados e indicadores de eficiência num documento profissional.</p>
-        </div>
-      )}
-    </div>
-  );
+  // Selection Sheet Exports
+  const handleExportDOC = () => {
+    if (!selectionSheetRef.current) return;
+    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'></head><body>`;
+    const sourceHTML = header + selectionSheetRef.current.innerHTML + `</body></html>`;
+    const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Folha_Selecao_${selectedReportUnitId || 'equip'}.doc`;
+    a.click();
+  };
+
+  const handleExportHTML = () => {
+    if (!selectionSheetRef.current) return;
+    const content = selectionSheetRef.current.innerHTML;
+    const blob = new Blob([`<html><head><style>body{font-family:sans-serif;padding:40px;} table{width:100%;border-collapse:collapse;} td{padding:8px;border:1px solid #eee;}</style></head><body>${content}</body></html>`], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Folha_Selecao_${selectedReportUnitId || 'equip'}.html`;
+    a.click();
+  };
+
+  const handleCopyToClipboard = async () => {
+    if (!selectionSheetRef.current) return;
+    try {
+      const html = selectionSheetRef.current.innerHTML;
+      const data = [new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }) })];
+      await navigator.clipboard.write(data);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch (err) { console.error(err); }
+  };
+
+  const efficiencyChartData = useMemo(() => {
+    const xPoints = [25, 50, 75, 100];
+    return xPoints.map(x => {
+      const point: any = { x: `${x}%` };
+      selectedUnits.forEach(u => {
+        const found = u.efficiencyCurve.find(p => p.x === x);
+        if (found) point[u.model] = found.y;
+      });
+      return point;
+    });
+  }, [selectedUnits]);
+
+  const mainEquipment = useMemo(() => OEM_DATABASE.find(u => u.id === selectedReportUnitId) || selectedUnits[0] || null, [selectedReportUnitId, selectedUnits]);
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={setActiveTab} onNew={() => window.location.reload()} onOpen={() => alert('Abrir projecto (Em desenvolvimento)')} onSave={handleSaveJSON}>
-      {activeTab === 'home' && renderHome()}
-      {activeTab === 'config' && renderConfig()}
-      {activeTab === 'loads' && renderLoads()}
-      {activeTab === 'selection' && renderSelection()}
-      {activeTab === 'analysis' && renderAnalysis()}
-      {activeTab === 'report' && renderReport()}
+    <Layout activeTab={activeTab} setActiveTab={setActiveTab} onNew={() => window.location.reload()} onOpen={() => {}} onSave={handleSaveJSON}>
+      
+      {/* Global Modals */}
+      {viewingEquipmentId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">
+          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-2xl p-10 relative">
+            <button onClick={() => setViewingEquipmentId(null)} className="absolute top-8 right-8 p-3 hover:bg-slate-100 rounded-full transition text-slate-400">
+              <X size={24} />
+            </button>
+            {(() => {
+              const equip = OEM_DATABASE.find(e => e.id === viewingEquipmentId);
+              if (!equip) return <p>Equipamento não encontrado.</p>;
+              return (
+                <div className="space-y-6">
+                  <h3 className="text-3xl font-black text-slate-900">{equip.brand} {equip.model}</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-slate-50 p-4 rounded-2xl"><span className="text-[10px] uppercase font-black text-slate-400 block">Capacidade Cooling</span><div className="text-xl font-black">{equip.coolingCapacity.toFixed(1)} kW</div></div>
+                    <div className="bg-slate-50 p-4 rounded-2xl"><span className="text-[10px] uppercase font-black text-slate-400 block">ESEER</span><div className="text-xl font-black text-emerald-600">{equip.eseer.toFixed(2)}</div></div>
+                    <div className="bg-slate-50 p-4 rounded-2xl"><span className="text-[10px] uppercase font-black text-slate-400 block">Fluido</span><div className="text-xl font-black">{equip.refrigerant}</div></div>
+                    <div className="bg-slate-50 p-4 rounded-2xl"><span className="text-[10px] uppercase font-black text-slate-400 block">Compressor</span><div className="text-xl font-black">{equip.compressorType}</div></div>
+                  </div>
+                  <div className="border-t pt-4 text-slate-600 space-y-2">
+                    <p><strong>Limites Ambiente:</strong> {equip.minAmbientTemp}ºC a {equip.maxAmbientTemp}ºC</p>
+                    <p><strong>Limites Fluido:</strong> {equip.minFluidTemp}ºC a {equip.maxFluidTemp}ºC</p>
+                    <p><strong>Dimensões:</strong> {equip.dimensions} mm</p>
+                    <p><strong>Peso:</strong> {equip.weight.toLocaleString()} kg</p>
+                  </div>
+                  <button onClick={() => { toggleEquipmentSelection(equip.id); setViewingEquipmentId(null); }} className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-blue-700 transition">
+                    {project.selectedEquipmentIds.includes(equip.id) ? 'Remover Selecção' : 'Adicionar à Selecção'}
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'home' && (
+        <div className="space-y-12 py-10 animate-in fade-in duration-500">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-12">
+            <div className="flex-1 space-y-6 text-center md:text-left">
+              <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-black uppercase tracking-widest">
+                <Award size={14} className="mr-2" /> Koelho2000 Profissional Selection
+              </div>
+              <h2 className="text-6xl md:text-7xl font-black text-slate-900 leading-tight">HVAC <span className="text-blue-600">Selection</span> Suite</h2>
+              <p className="text-xl text-slate-500 max-w-xl mx-auto md:mx-0">Plataforma de engenharia térmica para selecção e modelação dinâmica de chillers e bombas de calor.</p>
+              <div className="flex flex-wrap justify-center md:justify-start gap-4">
+                <button onClick={() => setActiveTab('config')} className="px-10 py-5 bg-slate-900 text-white rounded-[30px] font-black uppercase tracking-widest hover:bg-slate-800 transition shadow-2xl active:scale-95">Configurar Projecto</button>
+                <button onClick={() => setActiveTab('selection')} className="px-10 py-5 bg-white border-2 border-slate-100 text-slate-700 rounded-[30px] font-black uppercase tracking-widest hover:bg-slate-50 transition active:scale-95">Explorar OEM</button>
+              </div>
+            </div>
+            <div className="flex-1 w-full max-w-lg bg-gradient-to-br from-blue-600 to-blue-800 rounded-[80px] p-12 text-white shadow-[0_50px_100px_-20px_rgba(37,99,235,0.4)] relative overflow-hidden">
+               <Wind className="absolute -top-10 -right-10 opacity-10" size={300} />
+               <h3 className="text-3xl font-black mb-10 relative z-10">Status do Projecto</h3>
+               <div className="space-y-8 relative z-10">
+                 <div className="border-b border-white/20 pb-4 flex justify-between items-end">
+                   <div><span className="text-[10px] uppercase font-black opacity-60 tracking-widest">Carga de Pico</span><div className="text-4xl font-black">{project.peakPower} kW</div></div>
+                   <Activity className="opacity-40" size={32} />
+                 </div>
+                 <div className="border-b border-white/20 pb-4 flex justify-between items-end">
+                   <div><span className="text-[10px] uppercase font-black opacity-60 tracking-widest">Equipamentos</span><div className="text-4xl font-black">{project.selectedEquipmentIds.length}</div></div>
+                   <Database className="opacity-40" size={32} />
+                 </div>
+               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'config' && (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6">
+          <header>
+            <h2 className="text-4xl font-black text-slate-900 tracking-tight">Dados do Projecto</h2>
+            <p className="text-slate-500 mt-2">Identificação oficial da obra e entidades envolvidas.</p>
+          </header>
+
+          <div className="bg-white p-10 rounded-[50px] border shadow-2xl grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-8">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Referência da Obra</label>
+              <input 
+                type="text" 
+                value={project.workReference} 
+                onChange={e => setProject({...project, workReference: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+                placeholder="FO-00-00"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Nome do Projecto</label>
+              <input 
+                type="text" 
+                value={project.projectName} 
+                onChange={e => setProject({...project, projectName: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Nome do Cliente</label>
+              <input 
+                type="text" 
+                value={project.clientName} 
+                onChange={e => setProject({...project, clientName: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Nome da Instalação</label>
+              <input 
+                type="text" 
+                value={project.installationName} 
+                onChange={e => setProject({...project, installationName: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Local da Instalação</label>
+              <input 
+                type="text" 
+                value={project.location} 
+                onChange={e => setProject({...project, location: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Nome Técnico Responsável</label>
+              <input 
+                type="text" 
+                value={project.technicianName} 
+                onChange={e => setProject({...project, technicianName: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Empresa de Auditoria</label>
+              <input 
+                type="text" 
+                value={project.auditCompany} 
+                onChange={e => setProject({...project, auditCompany: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Empresa Proponente</label>
+              <input 
+                type="text" 
+                value={project.companyName} 
+                onChange={e => setProject({...project, companyName: e.target.value})} 
+                className="w-full p-4 bg-slate-50 rounded-2xl font-bold border-2 border-transparent focus:border-blue-500 transition-all outline-none"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => setActiveTab('loads')} className="px-12 py-5 bg-blue-600 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition shadow-2xl shadow-blue-600/30 active:scale-95">
+              Próximo: Cargas <ChevronRight size={24} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'loads' && (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+            <div>
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Análise de Carga Horária</h2>
+              <p className="text-slate-500 mt-2">Defina o comportamento térmico para simulação de performance 8760h.</p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="bg-slate-100 p-1.5 rounded-2xl flex">
+                <button 
+                  onClick={() => setProject({...project, loadDefinitionMode: 'Profiles'})}
+                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${project.loadDefinitionMode === 'Profiles' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Modo Perfil
+                </button>
+                <button 
+                  onClick={() => setProject({...project, loadDefinitionMode: '8760h'})}
+                  className={`px-6 py-2.5 rounded-xl text-xs font-black uppercase transition-all ${project.loadDefinitionMode === '8760h' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  Import 8760h
+                </button>
+              </div>
+              <button onClick={() => fileInputRef.current?.click()} className="px-6 py-3 bg-white border-2 border-slate-100 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-slate-50 active:scale-95">
+                <FileUp size={18} /> Carregar CSV
+              </button>
+              <input type="file" ref={fileInputRef} onChange={handleImportCSV} className="hidden" />
+            </div>
+          </header>
+
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-10">
+            <div className="lg:col-span-1 space-y-6">
+              <div className="bg-white p-8 rounded-[40px] border shadow-xl space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Potência Nominal (kW)</label>
+                  <input type="number" value={project.peakPower} onChange={e => setProject({...project, peakPower: Number(e.target.value)})} className="w-full text-2xl font-black text-blue-600 outline-none p-3 bg-slate-50 rounded-2xl focus:ring-2 ring-blue-500 transition-all" />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Temp. Saída Fluid (ºC)</label>
+                  <input type="number" value={project.targetTemperature} onChange={e => setProject({...project, targetTemperature: Number(e.target.value)})} className="w-full text-2xl font-black text-indigo-600 outline-none p-3 bg-slate-50 rounded-2xl focus:ring-2 ring-indigo-500 transition-all" />
+                </div>
+                <div className="pt-4 border-t border-slate-100">
+                  <label className="text-[10px] font-black uppercase text-slate-400 mb-3 block">Selecção de Perfil</label>
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                    {STANDARD_PROFILES.map((p, idx) => (
+                      <button key={idx} onClick={() => applyStandardProfile(idx)} className="w-full text-left p-3 text-xs font-bold rounded-xl hover:bg-blue-50 hover:text-blue-600 border border-transparent hover:border-blue-100 transition-all flex items-center justify-between">
+                        {p.name} <ChevronRight size={14} className="opacity-30" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="bg-slate-900 p-8 rounded-[40px] text-white shadow-2xl">
+                <h4 className="text-[10px] font-black uppercase opacity-40 mb-6 tracking-widest">Resumo Anual</h4>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center"><span className="text-xs text-slate-400">Consumo MWh</span><span className="text-lg font-black text-emerald-400">{stats.energy.toFixed(1)}</span></div>
+                  <div className="flex justify-between items-center"><span className="text-xs text-slate-400">Load Factor</span><span className="text-lg font-black">{stats.loadFactor.toFixed(1)}%</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div className="lg:col-span-3 space-y-10">
+              <div className="bg-white p-8 rounded-[40px] border shadow-lg grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                   <h4 className="text-[11px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><Clock size={16} className="text-blue-500"/> Procura Diária (Dias Úteis)</h4>
+                   <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={project.dailyProfiles.weekday.map((v, i) => ({ h: i, v }))}>
+                        <Tooltip contentStyle={{borderRadius: '12px', border: 'none'}} />
+                        <Bar dataKey="v" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                   </div>
+                </div>
+                <div className="space-y-4">
+                   <h4 className="text-[11px] font-black uppercase text-slate-400 tracking-widest flex items-center gap-2"><Calendar size={16} className="text-indigo-500"/> Sazonalidade Mensal</h4>
+                   <div className="h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={project.monthlyProfile.map((v, i) => ({ m: ['J','F','M','A','M','J','J','A','S','O','N','D'][i], v }))}>
+                        <XAxis dataKey="m" axisLine={false} tickLine={false} fontSize={10} />
+                        <Bar dataKey="v" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                   </div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900 p-10 rounded-[50px] text-white shadow-2xl">
+                <div className="flex justify-between items-center mb-10">
+                  <h4 className="text-sm font-black uppercase opacity-40 tracking-[0.2em] flex items-center gap-3"><Activity size={18}/> Perfil de Carga Anual Simulado (8760h)</h4>
+                  <div className="flex gap-3">
+                    <button onClick={handleExport8760CSV} className="px-6 py-3 bg-white/10 text-white border border-white/20 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-white/20 transition flex items-center gap-2">
+                      <Download size={14} /> Exportar CSV
+                    </button>
+                    <button onClick={generateYearlyLoadFromProfiles} className="px-8 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition">Calcular Modelo</button>
+                  </div>
+                </div>
+                <div className="h-80">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={project.hourlyLoads.map((v, i) => ({ v }))}>
+                      <Area type="monotone" dataKey="v" stroke="#3b82f6" strokeWidth={2} fill="#3b82f6" fillOpacity={0.1} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* New Load Analysis Note Section */}
+          <div className="bg-white p-12 rounded-[50px] border shadow-2xl space-y-10 animate-in fade-in slide-in-from-bottom-6">
+            <div className="flex flex-col md:flex-row justify-between items-start gap-8 border-b pb-8">
+              <div className="flex-1 space-y-4">
+                <h3 className="text-2xl font-black text-slate-900 flex items-center gap-3"><Info className="text-blue-600" /> Nota de Análise da Carga (Estatística 8760h)</h3>
+                <p className="text-slate-500 text-sm leading-relaxed">
+                  Resumo técnico da distribuição de energia e perfis de procura térmica simulados para o ciclo anual completo.
+                </p>
+              </div>
+              <button 
+                onClick={handleAnalyzeLoads} 
+                disabled={isAnalyzingLoads || stats.max === 0}
+                className="px-10 py-5 bg-indigo-600 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-indigo-700 transition shadow-2xl active:scale-95 disabled:opacity-50"
+              >
+                {isAnalyzingLoads ? <RefreshCw className="animate-spin" /> : <Lightbulb />}
+                {isAnalyzingLoads ? 'Analisando...' : 'Gerar Recomendação IA'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+              <div className="p-6 bg-slate-50 rounded-3xl space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Análise Diária</span>
+                <div className="text-sm font-bold text-slate-700">Pico: <span className="text-blue-600 font-black">{stats.max.toFixed(1)} kW</span></div>
+                <div className="text-xs text-slate-500">Distribuição baseada em regime de ocupação {(project.loadDefinitionMode === 'Profiles' ? 'estático' : 'importado')}.</div>
+              </div>
+              <div className="p-6 bg-slate-50 rounded-3xl space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Análise Semanal</span>
+                <div className="text-sm font-bold text-slate-700">Factor Fim de Semana: <span className="text-indigo-600 font-black">{((project.weeklyProfile[5] + project.weeklyProfile[6]) / 2 * 100).toFixed(0)}%</span></div>
+                <div className="text-xs text-slate-500">Redução de carga média em regime de repouso semanal.</div>
+              </div>
+              <div className="p-6 bg-slate-50 rounded-3xl space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Análise Mensal</span>
+                <div className="text-sm font-bold text-slate-700">Amplitude Sazonal: <span className="text-emerald-600 font-black">{(Math.max(...project.monthlyProfile) - Math.min(...project.monthlyProfile)).toFixed(2)}</span></div>
+                <div className="text-xs text-slate-500">Diferença de procura entre meses de pico e regime reduzido.</div>
+              </div>
+              <div className="p-6 bg-slate-50 rounded-3xl space-y-3">
+                <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Análise Anual</span>
+                <div className="text-sm font-bold text-slate-700">Eficiência Alvo: <span className="text-blue-900 font-black">{stats.loadFactor < 40 ? 'Alta' : 'Padrão'}</span></div>
+                <div className="text-xs text-slate-500">Load Factor de {stats.loadFactor.toFixed(1)}% sugere necessidade de regulação fina.</div>
+              </div>
+            </div>
+
+            {loadAnalysisAI && (
+              <div className="p-8 bg-indigo-50 border-2 border-indigo-100 rounded-[35px] relative animate-in zoom-in-95">
+                <div className="absolute -top-4 left-10 px-4 py-1 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-full">Recomendação do Especialista IA</div>
+                <p className="text-indigo-900 text-lg font-medium italic leading-relaxed">
+                  "{loadAnalysisAI}"
+                </p>
+                <div className="mt-6 flex items-center gap-4 text-indigo-400">
+                  <CheckCircle size={20} />
+                  <span className="text-xs font-bold uppercase tracking-widest">Configuração sugerida para optimização de CAPEX/OPEX</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'selection' && (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6">
+          <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white p-8 rounded-[40px] border shadow-xl">
+            <div className="flex-1">
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Catálogo OEM Multimarca</h2>
+              <p className="text-slate-500 mt-2">Selecção técnica de equipamentos com filtragem inteligente por carga.</p>
+            </div>
+            <div className="flex flex-wrap gap-4">
+               <button 
+                onClick={() => setIntelligentFilterEnabled(!intelligentFilterEnabled)} 
+                className={`px-6 py-4 rounded-[25px] text-xs font-black uppercase tracking-widest flex items-center gap-3 transition-all shadow-xl active:scale-95 ${intelligentFilterEnabled ? 'bg-blue-600 text-white' : 'bg-white border-2 border-slate-100 text-blue-600'}`}
+               >
+                 <Sparkles size={20} /> Filtro Inteligente {intelligentFilterEnabled ? 'ON' : 'OFF'}
+               </button>
+               <div className="relative">
+                 <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+                 <input type="text" placeholder="Procurar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-14 pr-8 py-4 bg-slate-50 rounded-[25px] border-2 border-transparent focus:border-blue-500 transition-all font-bold w-64" />
+               </div>
+               <button onClick={() => setShowAdvancedFilters(!showAdvancedFilters)} className={`p-4 rounded-[25px] transition-all shadow-lg active:scale-95 ${showAdvancedFilters ? 'bg-blue-600 text-white' : 'bg-slate-900 text-white'}`}>
+                 <SlidersHorizontal size={24} />
+               </button>
+            </div>
+          </header>
+
+          {showAdvancedFilters && (
+            <div className="bg-white p-10 rounded-[40px] border shadow-2xl grid grid-cols-1 md:grid-cols-3 gap-8 animate-in slide-in-from-top-6">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400">Marca</label>
+                <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <option value="All">Todas as Marcas</option>
+                  {BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400">Refrigerante</label>
+                <select value={refrigerantFilter} onChange={e => setRefrigerantFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <option value="All">Todos os Fluidos</option>
+                  {Object.values(Refrigerant).map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black uppercase text-slate-400">Compressor</label>
+                <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <option value="All">Todos os Compressores</option>
+                  {Object.values(CompressorType).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-white rounded-[50px] border shadow-2xl overflow-hidden">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50 text-[11px] font-black uppercase text-slate-400 tracking-[0.2em] border-b">
+                <tr>
+                  <th className="px-10 py-8">Equipamento / Marca</th>
+                  <th className="px-10 py-8">Capacidade (kW)</th>
+                  <th className="px-10 py-8">ESEER</th>
+                  <th className="px-10 py-8">Limites de Operação</th>
+                  <th className="px-10 py-8 text-right">Selecção</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredOEMDatabase.map(item => (
+                  <tr key={item.id} className="hover:bg-slate-50/50 transition-all group">
+                    <td className="px-10 py-8">
+                      <div>
+                        <span className="font-black text-slate-900 text-lg block">{item.brand}</span>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{item.model}</span>
+                        <div className="flex gap-2 mt-2">
+                          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded-md">{item.compressorType}</span>
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[9px] font-black rounded-md">{item.refrigerant}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-10 py-8">
+                      <div className="space-y-1">
+                        <span className="text-xl font-black text-slate-900">{item.coolingCapacity.toFixed(1)} <span className="text-[10px] text-slate-400">(Cool)</span></span>
+                        {item.heatingCapacity > 0 && <span className="block text-[11px] font-bold text-red-500">+{item.heatingCapacity.toFixed(1)} kW (Heat)</span>}
+                      </div>
+                    </td>
+                    <td className="px-10 py-8"><span className="text-2xl font-black text-emerald-600">{item.eseer.toFixed(2)}</span></td>
+                    <td className="px-10 py-8">
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-[11px] font-black text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 w-fit">
+                          <Sun size={14}/> {item.minAmbientTemp}ºC a {item.maxAmbientTemp}ºC (Amb)
+                        </div>
+                        <div className="flex items-center gap-2 text-[11px] font-black text-blue-700 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-100 w-fit">
+                          <Droplets size={14}/> {item.minFluidTemp}ºC a {item.maxFluidTemp}ºC (Fluid)
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-10 py-8 text-right">
+                       <div className="flex justify-end gap-3">
+                         <button onClick={() => setViewingEquipmentId(item.id)} className="p-4 bg-white border border-slate-100 text-slate-400 hover:text-blue-600 hover:shadow-lg rounded-2xl transition-all active:scale-90 shadow-sm"><Eye size={24} /></button>
+                         <button onClick={() => toggleEquipmentSelection(item.id)} className={`px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white shadow-red-200' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white shadow-slate-200'}`}>{project.selectedEquipmentIds.includes(item.id) ? 'Remover' : 'Seleccionar'}</button>
+                       </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'analysis' && (
+        <div className="space-y-12 animate-in slide-in-from-bottom-6">
+          <header>
+            <h2 className="text-4xl font-black text-slate-900 tracking-tight">Análise Comparativa & Eficiência</h2>
+            <p className="text-slate-500 mt-2">Validação técnica e comparação de curvas de carga parcial (part-load).</p>
+          </header>
+          
+          {selectedUnits.length === 0 ? (
+            <div className="p-32 bg-slate-100/50 border-4 border-dashed border-slate-200 rounded-[60px] text-center w-full max-w-5xl mx-auto space-y-6">
+               <div className="bg-white w-24 h-24 rounded-full flex items-center justify-center mx-auto shadow-sm text-slate-200"><BarChart2 size={40} /></div>
+               <p className="text-slate-400 font-medium italic">Seleccione equipamentos no catálogo OEM para comparar.</p>
+            </div>
+          ) : (
+            <div className="space-y-16">
+              <div className="bg-white p-12 rounded-[50px] border shadow-2xl overflow-x-auto">
+                <h3 className="text-2xl font-black mb-10 flex items-center gap-4"><Table className="text-blue-500" size={28} /> Quadro Comparativo</h3>
+                <table className="w-full text-left">
+                  <thead className="bg-slate-50 text-[11px] font-black uppercase text-slate-400 tracking-widest border-b">
+                    <tr>
+                      <th className="px-6 py-5">Solução HVAC</th>
+                      <th className="px-6 py-5 text-center">ESEER</th>
+                      <th className="px-6 py-5 text-center">EER / COP</th>
+                      <th className="px-6 py-5 text-center">Preço Est. (€)</th>
+                      <th className="px-6 py-5 text-right">Relatório</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {selectedUnits.map(u => (
+                      <tr key={u.id} className={`hover:bg-slate-50/50 transition-colors ${selectedReportUnitId === u.id ? 'bg-blue-50/30' : ''}`}>
+                        <td className="px-6 py-6">
+                          <div className="font-black text-slate-900">{u.brand} {u.model}</div>
+                          <div className="text-[10px] text-slate-400 font-bold uppercase mt-1">{u.compressorType} / {u.refrigerant}</div>
+                        </td>
+                        <td className="px-6 py-6 text-center font-black text-2xl text-emerald-600">{u.eseer.toFixed(2)}</td>
+                        <td className="px-6 py-6 text-center font-bold text-slate-700">{u.eer.toFixed(2)} / {u.cop.toFixed(2)}</td>
+                        <td className="px-6 py-6 text-center font-black text-slate-900">{u.price.toLocaleString('pt-PT')}</td>
+                        <td className="px-6 py-6 text-right">
+                          <button onClick={() => setSelectedReportUnitId(selectedReportUnitId === u.id ? null : u.id)} className={`px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ml-auto ${selectedReportUnitId === u.id ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                            {selectedReportUnitId === u.id ? <Check size={14}/> : <Star size={14}/>} {selectedReportUnitId === u.id ? 'Principal' : 'Seleccionar'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+                <div className="bg-white p-12 rounded-[50px] border shadow-2xl h-[500px] flex flex-col">
+                  <h3 className="text-2xl font-black mb-10 flex items-center gap-4"><TrendingUp className="text-emerald-500" size={28} /> Curvas de Eficiência</h3>
+                  <div className="flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={efficiencyChartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="x" stroke="#94a3b8" fontSize={11} fontStyle="bold" />
+                        <YAxis stroke="#94a3b8" fontSize={11} fontStyle="bold" domain={[0.6, 1.1]} />
+                        <Tooltip />
+                        <Legend />
+                        {selectedUnits.map((u, i) => (
+                          <Line key={u.id} type="monotone" dataKey={u.model} stroke={['#3b82f6','#10b981','#f59e0b','#ef4444'][i % 4]} strokeWidth={4} dot={{r:6}} />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 p-12 rounded-[50px] text-white shadow-2xl relative overflow-hidden flex flex-col">
+                  <Sparkles className="absolute -top-10 -right-10 text-blue-500 opacity-10" size={200} />
+                  <div className="relative z-10 space-y-8 flex-1 flex flex-col">
+                    <div className="flex justify-between items-start gap-6">
+                      <h3 className="text-3xl font-black tracking-tight">Parecer IA Especialista</h3>
+                      <button onClick={handleGenerateComparisonAnalysis} disabled={isComparing} className="px-10 py-5 bg-blue-600 text-white rounded-3xl font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition active:scale-95 disabled:opacity-50">
+                        {isComparing ? <RefreshCw className="animate-spin" size={24} /> : <Wand2 size={24} />} 
+                        {isComparing ? 'Analisando...' : 'Gerar Parecer'}
+                      </button>
+                    </div>
+                    
+                    {comparisonAnalysis && (
+                      <div className="p-8 bg-white/5 rounded-[40px] text-lg leading-relaxed border border-white/10 flex-1 overflow-y-auto custom-scrollbar italic text-slate-300">
+                        {comparisonAnalysis}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'selectionSheet' && (
+        <div className="space-y-16 animate-in slide-in-from-bottom-6 pb-32">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 no-print">
+            <div>
+              <h2 className="text-5xl font-black text-slate-900 tracking-tight">Folha de Seleção</h2>
+              <p className="text-slate-500 text-lg mt-2">Documentação técnica para incorporação em projectos de execução.</p>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              {mainEquipment && (
+                <>
+                  <button onClick={handleCopyToClipboard} className={`px-8 py-4 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl active:scale-95 transition-all ${copySuccess ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-100'}`}>
+                    {copySuccess ? <Check size={20}/> : <Copy size={20}/>} {copySuccess ? 'Copiado!' : 'Copiar para Word'}
+                  </button>
+                  <button onClick={handleExportHTML} className="px-8 py-4 bg-white text-slate-700 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-slate-50 border-2 border-slate-100 active:scale-95">
+                    <FileCode size={20}/> HTML
+                  </button>
+                  <button onClick={handleExportDOC} className="px-8 py-4 bg-white text-slate-700 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-slate-50 border-2 border-slate-100 active:scale-95">
+                    <FileOutput size={20}/> Word (DOC)
+                  </button>
+                  <button onClick={() => window.print()} className="px-10 py-5 bg-slate-900 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 shadow-2xl hover:bg-slate-800 transition active:scale-95">
+                    <Printer size={24}/> Imprimir A4
+                  </button>
+                </>
+              )}
+            </div>
+          </header>
+
+          {!mainEquipment ? (
+            <div className="p-32 bg-slate-100/50 border-4 border-dashed border-slate-200 rounded-[60px] text-center w-full max-w-5xl mx-auto space-y-6">
+              <ClipboardList className="mx-auto text-slate-200" size={100} />
+              <p className="text-slate-400 font-medium italic">Defina uma "Solução Principal" na aba Análise para visualizar a folha de dados.</p>
+            </div>
+          ) : (
+            <div className="w-[210mm] min-h-[297mm] bg-white shadow-2xl mx-auto p-16 text-[#2a3f5f] font-sans text-[11px] border border-slate-200 selection-sheet-printable" ref={selectionSheetRef}>
+              <div className="flex justify-between items-start mb-12 border-b-4 border-blue-900 pb-8">
+                <div>
+                  <h1 className="text-5xl font-black text-blue-900 tracking-tighter">{mainEquipment.brand}</h1>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2">Koelho2000 Pro Selection Suite</p>
+                </div>
+                <div className="text-right space-y-3">
+                  <div className="text-2xl font-black uppercase text-blue-900">Folha de Selecção</div>
+                  <div className="grid grid-cols-2 gap-x-6 text-[10px] font-bold text-slate-500">
+                    <span className="text-right uppercase opacity-60">Ref:</span><span className="text-slate-900 text-left font-black">{project.workReference}</span>
+                    <span className="text-right uppercase opacity-60">Projecto:</span><span className="text-slate-900 text-left">{project.projectName}</span>
+                    <span className="text-right uppercase opacity-60">Instalação:</span><span className="text-slate-900 text-left">{project.installationName} ({project.location})</span>
+                    <span className="text-right uppercase opacity-60">Cliente:</span><span className="text-slate-900 text-left">{project.clientName}</span>
+                    <span className="text-right uppercase opacity-60">Auditores:</span><span className="text-slate-900 text-left">{project.auditCompany}</span>
+                    <span className="text-right uppercase opacity-60">Engenheiro:</span><span className="text-slate-900 text-left">{project.technicianName}</span>
+                    <span className="text-right uppercase opacity-60">Data:</span><span className="text-slate-900 text-left">{new Date().toLocaleDateString('pt-PT')}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-12">
+                <h2 className="text-4xl font-black text-blue-900 mb-2">{mainEquipment.model}</h2>
+                <p className="text-blue-500 font-black text-xl uppercase tracking-widest">{mainEquipment.compressorType}-cooled Industrial Solution</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-16">
+                <section className="space-y-6">
+                  <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Informação de Performance</h3>
+                  <table className="w-full border-separate border-spacing-y-1">
+                    <tbody>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Arrefecimento (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900 text-lg">{mainEquipment.coolingCapacity.toFixed(1)}</td></tr>
+                      {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Aquecimento (kW)</td><td className="px-4 py-3 text-right font-black text-red-600 text-lg">{mainEquipment.heatingCapacity.toFixed(1)}</td></tr>}
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência ESEER</td><td className="px-4 py-3 text-right font-black text-emerald-600 text-lg">{mainEquipment.eseer.toFixed(2)}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Consumo Elétrico Nominal (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900">{(mainEquipment.coolingCapacity / mainEquipment.eer).toFixed(1)}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Fluido Refrigerante</td><td className="px-4 py-3 text-right font-black text-blue-900">{mainEquipment.refrigerant}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Peso Unidade (kg)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.weight.toLocaleString()}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Dimensões (LxPxH mm)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.dimensions}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Nível Sonoro dB(A)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.noiseLevel}.0</td></tr>
+                    </tbody>
+                  </table>
+                </section>
+                
+                <section className="space-y-6">
+                  <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Condições de Operação</h3>
+                  <div className="bg-slate-50 p-6 rounded-2xl space-y-6 border border-slate-100">
+                    <div className="space-y-3">
+                      <span className="font-black text-[10px] uppercase text-blue-800 tracking-widest block border-b pb-2 border-blue-100">Evaporador / Circuito Primário</span>
+                      <div className="grid grid-cols-2 gap-y-2 text-[11px]">
+                        <span className="text-slate-500">Temp. Saída Fluid:</span><span className="font-black text-right">{project.targetTemperature}.0 ºC</span>
+                        <span className="text-slate-500">Caudal Fluid:</span><span className="font-black text-right">{(mainEquipment.coolingCapacity/4.186/5).toFixed(2)} l/s</span>
+                        <span className="text-slate-500">Tipo Fluid:</span><span className="font-black text-right">Água Fresca</span>
+                      </div>
+                    </div>
+                    <div className="space-y-3 pt-4">
+                      <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condições de Ar Exterior</span>
+                      <div className="grid grid-cols-2 gap-y-2 text-[11px]">
+                        <span className="text-slate-500">Limites Ambiente:</span><span className="font-black text-right">{mainEquipment.minAmbientTemp}ºC a {mainEquipment.maxAmbientTemp}ºC</span>
+                        <span className="text-slate-500">Tipo de Condensação:</span><span className="font-black text-right">{mainEquipment.condensationType}</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Added Investment Value above Certification Seal */}
+                  <div className="p-6 bg-slate-900 text-white rounded-2xl flex justify-between items-center shadow-lg">
+                    <div className="flex items-center gap-3">
+                       <Calculator className="text-blue-400" size={20} />
+                       <span className="text-[10px] uppercase font-black tracking-widest">Valor do Investimento</span>
+                    </div>
+                    <span className="text-2xl font-black">{mainEquipment.price.toLocaleString('pt-PT')} €</span>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-100 p-6 rounded-2xl flex items-center gap-4">
+                     <Award className="text-blue-900" size={32} />
+                     <div className="text-[9px] font-black uppercase tracking-tighter text-blue-900 leading-tight">
+                       José Coelho • PQ00851 • OET 2321<br/>Certificação AQUA+ AQ0222
+                     </div>
+                  </div>
+                </section>
+              </div>
+
+              {/* Added Efficiency Curve Section */}
+              <div className="mt-12 space-y-6">
+                <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Curva de Eficiência vs Carga Partilhada</h3>
+                <div className="grid grid-cols-3 gap-8 items-center bg-slate-50 p-8 rounded-3xl border border-slate-100">
+                  <div className="col-span-2 h-48">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={mainEquipment.efficiencyCurve}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                        <XAxis 
+                          dataKey="x" 
+                          stroke="#64748b" 
+                          fontSize={10} 
+                          fontStyle="bold" 
+                          label={{ value: 'Carga (%)', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 'bold' }} 
+                        />
+                        <YAxis 
+                          stroke="#64748b" 
+                          fontSize={10} 
+                          fontStyle="bold" 
+                          label={{ value: 'Eficiência Rel.', angle: -90, position: 'insideLeft', fontSize: 10, fontWeight: 'bold' }} 
+                        />
+                        <Line type="monotone" dataKey="y" stroke="#1e3a8a" strokeWidth={3} dot={{ r: 4, fill: '#1e3a8a' }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="col-span-1">
+                    <table className="w-full text-[10px] border-collapse">
+                      <thead>
+                        <tr className="border-b-2 border-slate-200">
+                          <th className="text-left py-2 uppercase opacity-60">Carga (%)</th>
+                          <th className="text-right py-2 uppercase opacity-60">Eficiência Rel.</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mainEquipment.efficiencyCurve.map((p, idx) => (
+                          <tr key={idx} className="border-b border-slate-100">
+                            <td className="py-2 font-bold">{p.x}%</td>
+                            <td className="py-2 text-right font-black text-blue-900">{p.y.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-24 pt-8 border-t-2 border-slate-100 text-[9px] text-slate-400 font-bold uppercase tracking-[0.4em] flex justify-between items-center">
+                <div className="space-y-1">
+                  <div>Koelho2000 Engenharia • NIF PT513183647</div>
+                  <div className="opacity-60 lowercase">www.koelho2000.com • koelho2000@gmail.com</div>
+                </div>
+                <span>Folha de Dados Certificada</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'report' && (
+        <div className="space-y-16 animate-in slide-in-from-bottom-6 pb-32">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 no-print">
+            <div>
+              <h2 className="text-5xl font-black text-slate-900 tracking-tight">Relatório Técnico IA</h2>
+              <p className="text-slate-500 text-lg mt-2">Documentação profissional gerada sob os padrões da Koelho2000.</p>
+            </div>
+            <div className="flex gap-4">
+               {generatedReport && (
+                 <button onClick={() => window.print()} className="p-6 bg-slate-900 text-white rounded-[30px] shadow-2xl hover:bg-slate-800 transition active:scale-95">
+                   <Printer size={32}/>
+                 </button>
+               )}
+               <button 
+                onClick={handleGenerateReport} 
+                disabled={isGeneratingReport || selectedUnits.length === 0} 
+                className="px-12 py-6 bg-blue-600 text-white rounded-[35px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition shadow-2xl shadow-blue-600/30 disabled:opacity-50 active:scale-95"
+               >
+                 {isGeneratingReport ? <RefreshCw className="animate-spin" size={28} /> : <Sparkles size={28} />} 
+                 {isGeneratingReport ? 'Processando...' : (generatedReport ? 'Regerar Relatório' : 'Gerar Relatório A4')}
+               </button>
+            </div>
+          </header>
+
+          <div className="flex flex-col items-center">
+            {isGeneratingReport && (
+              <div className="flex flex-col items-center gap-10 py-32 text-center no-print">
+                <div className="relative">
+                  <div className="w-32 h-32 border-[12px] border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-600 animate-pulse" size={48} />
+                </div>
+                <p className="text-3xl font-black text-slate-900">Compilando Relatório Profissional...</p>
+              </div>
+            )}
+
+            {!isGeneratingReport && reportPages.length > 0 && (
+              <div ref={reportRef} className="print:block space-y-0">
+                {reportPages.map((page, idx) => renderReportPage(page, idx))}
+              </div>
+            )}
+
+            {!isGeneratingReport && reportPages.length === 0 && (
+              <div className="bg-slate-100/50 border-4 border-dashed border-slate-200 p-32 rounded-[60px] text-center w-full max-w-5xl no-print">
+                <FileText className="mx-auto mb-10 text-slate-200" size={100} />
+                <h4 className="text-3xl font-black text-slate-400 mb-4 uppercase tracking-widest">Aguardando Selecção</h4>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </Layout>
   );
 };

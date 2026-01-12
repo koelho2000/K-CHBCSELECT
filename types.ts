@@ -54,10 +54,12 @@ export interface OEMEquipment {
 
 export interface ProjectData {
   projectName: string;
+  workReference: string;
   clientName: string;
   installationName: string;
   technicianName: string;
   companyName: string;
+  auditCompany: string;
   location: string;
   equipmentType: EquipmentType;
   refrigerant: Refrigerant;
