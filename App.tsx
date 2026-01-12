@@ -88,10 +88,10 @@ const App: React.FC = () => {
   const [brandFilter, setBrandFilter] = useState<string>('All');
   const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
   const [compressorFilter, setCompressorFilter] = useState<string>('All');
-  const [condensationFilter, setCondensationFilter] = useState<string>('All'); // Added: Condensation Filter
-  const [modeFilter, setModeFilter] = useState<string>('All'); // Cool / Heat / HeatPump
-  const [minTempFilter, setMinTempFilter] = useState<string>(''); // Temp Min
-  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); // Temp Max
+  const [condensationFilter, setCondensationFilter] = useState<string>('All'); 
+  const [modeFilter, setModeFilter] = useState<string>('All'); 
+  const [minTempFilter, setMinTempFilter] = useState<string>(''); 
+  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); 
   const [searchTerm, setSearchTerm] = useState('');
 
   const stats = useMemo(() => {
@@ -107,16 +107,14 @@ const App: React.FC = () => {
 
   const filteredOEMDatabase = useMemo(() => {
     return OEM_DATABASE.filter(item => {
-      // Basic Filters
       const matchesBrand = brandFilter === 'All' || item.brand === brandFilter;
       const matchesRefr = refrigerantFilter === 'All' || item.refrigerant === refrigerantFilter;
       const matchesComp = compressorFilter === 'All' || item.compressorType === compressorFilter;
-      const matchesCond = condensationFilter === 'All' || item.condensationType === condensationFilter; // New match logic
+      const matchesCond = condensationFilter === 'All' || item.condensationType === condensationFilter; 
       const matchesSearch = searchTerm === '' || 
         item.model.toLowerCase().includes(searchTerm.toLowerCase()) || 
         item.brand.toLowerCase().includes(searchTerm.toLowerCase());
 
-      // Mode Filter (Cooling Only / Heating Only / Heat Pump)
       let matchesMode = true;
       if (modeFilter === 'Cooling') {
         matchesMode = item.heatingCapacity === 0;
@@ -126,7 +124,6 @@ const App: React.FC = () => {
         matchesMode = item.heatingCapacity > 0;
       }
 
-      // Temperature range Filter
       let matchesTemp = true;
       if (minTempFilter !== '') {
         matchesTemp = matchesTemp && item.minFluidTemp <= parseFloat(minTempFilter);
@@ -135,15 +132,12 @@ const App: React.FC = () => {
         matchesTemp = matchesTemp && item.maxFluidTemp >= parseFloat(maxTempFilter);
       }
 
-      // Intelligent Filter Logic
       let matchesIntelligent = true;
       if (intelligentFilterEnabled) {
         const capacityRange = [project.peakPower * 0.7, project.peakPower * 1.5];
         const fluidRange = [item.minFluidTemp, item.maxFluidTemp];
-        
         const isHeatingMode = project.targetTemperature > 25;
         const capacityToCompare = isHeatingMode ? item.heatingCapacity : item.coolingCapacity;
-        
         matchesIntelligent = 
           capacityToCompare >= capacityRange[0] && 
           capacityToCompare <= capacityRange[1] &&
@@ -817,7 +811,8 @@ const App: React.FC = () => {
                 <tr>
                   <th className="px-10 py-8">Equipamento / Marca</th>
                   <th className="px-10 py-8">Capacidade (kW)</th>
-                  <th className="px-10 py-8">ESEER</th>
+                  <th className="px-10 py-8">Eficiência (ESEER)</th>
+                  <th className="px-10 py-8">Nominal (EER / COP)</th>
                   <th className="px-10 py-8">Limites de Operação</th>
                   <th className="px-10 py-8 text-right">Selecção</th>
                 </tr>
@@ -842,6 +837,12 @@ const App: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-10 py-8"><span className="text-2xl font-black text-emerald-600">{item.eseer.toFixed(2)}</span></td>
+                    <td className="px-10 py-8">
+                      <div className="flex flex-col">
+                        <span className="text-sm font-black text-slate-700">EER: {item.eer.toFixed(2)}</span>
+                        {item.heatingCapacity > 0 && <span className="text-sm font-black text-indigo-600">COP: {item.cop.toFixed(2)}</span>}
+                      </div>
+                    </td>
                     <td className="px-10 py-8">
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 text-[11px] font-black text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 w-fit">
@@ -1021,7 +1022,9 @@ const App: React.FC = () => {
                     <tbody>
                       <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Arrefecimento (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900 text-lg">{mainEquipment.coolingCapacity.toFixed(1)}</td></tr>
                       {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Aquecimento (kW)</td><td className="px-4 py-3 text-right font-black text-red-600 text-lg">{mainEquipment.heatingCapacity.toFixed(1)}</td></tr>}
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência ESEER</td><td className="px-4 py-3 text-right font-black text-emerald-600 text-lg">{mainEquipment.eseer.toFixed(2)}</td></tr>
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Nominal (EER)</td><td className="px-4 py-3 text-right font-black text-blue-700 text-lg">{mainEquipment.eer.toFixed(2)}</td></tr>
+                      {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Aquecimento (COP)</td><td className="px-4 py-3 text-right font-black text-indigo-700 text-lg">{mainEquipment.cop.toFixed(2)}</td></tr>}
+                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Sazonal (ESEER)</td><td className="px-4 py-3 text-right font-black text-emerald-600 text-lg">{mainEquipment.eseer.toFixed(2)}</td></tr>
                       <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Consumo Elétrico Nominal (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900">{(mainEquipment.coolingCapacity / mainEquipment.eer).toFixed(1)}</td></tr>
                       <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Fluido Refrigerante</td><td className="px-4 py-3 text-right font-black text-blue-900">{mainEquipment.refrigerant}</td></tr>
                       <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Peso Unidade (kg)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.weight.toLocaleString()}</td></tr>
@@ -1037,17 +1040,33 @@ const App: React.FC = () => {
                     <div className="space-y-3">
                       <span className="font-black text-[10px] uppercase text-blue-800 tracking-widest block border-b pb-2 border-blue-100">Evaporador / Circuito Primário</span>
                       <div className="grid grid-cols-2 gap-y-2 text-[11px]">
+                        <span className="text-slate-500">Temp. Entrada Fluid:</span><span className="font-black text-right">{project.targetTemperature + 5}.0 ºC</span>
                         <span className="text-slate-500">Temp. Saída Fluid:</span><span className="font-black text-right">{project.targetTemperature}.0 ºC</span>
                         <span className="text-slate-500">Caudal Fluid:</span><span className="font-black text-right">{(mainEquipment.coolingCapacity/4.186/5).toFixed(2)} l/s</span>
                         <span className="text-slate-500">Tipo Fluid:</span><span className="font-black text-right">Água Fresca</span>
                       </div>
                     </div>
+                    
                     <div className="space-y-3 pt-4">
-                      <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condições de Ar Exterior</span>
-                      <div className="grid grid-cols-2 gap-y-2 text-[11px]">
-                        <span className="text-slate-500">Limites Ambiente:</span><span className="font-black text-right">{mainEquipment.minAmbientTemp}ºC a {mainEquipment.maxAmbientTemp}ºC</span>
-                        <span className="text-slate-500">Tipo de Condensação:</span><span className="font-black text-right">{mainEquipment.condensationType}</span>
-                      </div>
+                      {mainEquipment.condensationType === CondensationType.WATER ? (
+                        <>
+                          <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condensador / Circuito Secundário (Água)</span>
+                          <div className="grid grid-cols-2 gap-y-2 text-[11px]">
+                            <span className="text-slate-500">Temp. Entrada Água:</span><span className="font-black text-right">30.0 ºC</span>
+                            <span className="text-slate-500">Temp. Saída Água:</span><span className="font-black text-right">35.0 ºC</span>
+                            <span className="text-slate-500">Caudal Água:</span><span className="font-black text-right">{((mainEquipment.coolingCapacity * (1 + 1/mainEquipment.eer))/4.186/5).toFixed(2)} l/s</span>
+                            <span className="text-slate-500">Tipo Fluid:</span><span className="font-black text-right">Água de Torre / Geotermia</span>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condições de Ar Exterior</span>
+                          <div className="grid grid-cols-2 gap-y-2 text-[11px]">
+                            <span className="text-slate-500">Limites Ambiente:</span><span className="font-black text-right">{mainEquipment.minAmbientTemp}ºC a {mainEquipment.maxAmbientTemp}ºC</span>
+                            <span className="text-slate-500">Tipo de Condensação:</span><span className="font-black text-right">{mainEquipment.condensationType} (Ar)</span>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                   
