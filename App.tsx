@@ -88,9 +88,10 @@ const App: React.FC = () => {
   const [brandFilter, setBrandFilter] = useState<string>('All');
   const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
   const [compressorFilter, setCompressorFilter] = useState<string>('All');
-  const [modeFilter, setModeFilter] = useState<string>('All'); // New: Cool / Heat / HeatPump
-  const [minTempFilter, setMinTempFilter] = useState<string>(''); // New: Temp Min
-  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); // New: Temp Max
+  const [condensationFilter, setCondensationFilter] = useState<string>('All'); // Added: Condensation Filter
+  const [modeFilter, setModeFilter] = useState<string>('All'); // Cool / Heat / HeatPump
+  const [minTempFilter, setMinTempFilter] = useState<string>(''); // Temp Min
+  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); // Temp Max
   const [searchTerm, setSearchTerm] = useState('');
 
   const stats = useMemo(() => {
@@ -110,21 +111,22 @@ const App: React.FC = () => {
       const matchesBrand = brandFilter === 'All' || item.brand === brandFilter;
       const matchesRefr = refrigerantFilter === 'All' || item.refrigerant === refrigerantFilter;
       const matchesComp = compressorFilter === 'All' || item.compressorType === compressorFilter;
+      const matchesCond = condensationFilter === 'All' || item.condensationType === condensationFilter; // New match logic
       const matchesSearch = searchTerm === '' || 
         item.model.toLowerCase().includes(searchTerm.toLowerCase()) || 
         item.brand.toLowerCase().includes(searchTerm.toLowerCase());
 
-      // New Mode Filter (Cooling Only / Heating Only / Heat Pump)
+      // Mode Filter (Cooling Only / Heating Only / Heat Pump)
       let matchesMode = true;
       if (modeFilter === 'Cooling') {
         matchesMode = item.heatingCapacity === 0;
       } else if (modeFilter === 'Heating') {
-        matchesMode = item.heatingCapacity > 0 && item.coolingCapacity < 50; // Simple logic for dedicated heat pumps
+        matchesMode = item.heatingCapacity > 0 && item.coolingCapacity < 50; 
       } else if (modeFilter === 'HeatPump') {
         matchesMode = item.heatingCapacity > 0;
       }
 
-      // New Temperature range Filter
+      // Temperature range Filter
       let matchesTemp = true;
       if (minTempFilter !== '') {
         matchesTemp = matchesTemp && item.minFluidTemp <= parseFloat(minTempFilter);
@@ -149,9 +151,9 @@ const App: React.FC = () => {
           project.targetTemperature <= fluidRange[1];
       }
 
-      return matchesBrand && matchesRefr && matchesComp && matchesSearch && matchesIntelligent && matchesMode && matchesTemp;
+      return matchesBrand && matchesRefr && matchesComp && matchesCond && matchesSearch && matchesIntelligent && matchesMode && matchesTemp;
     });
-  }, [brandFilter, refrigerantFilter, compressorFilter, searchTerm, intelligentFilterEnabled, project.peakPower, project.targetTemperature, modeFilter, minTempFilter, maxTempFilter]);
+  }, [brandFilter, refrigerantFilter, compressorFilter, condensationFilter, searchTerm, intelligentFilterEnabled, project.peakPower, project.targetTemperature, modeFilter, minTempFilter, maxTempFilter]);
 
   const selectedUnits = useMemo(() => OEM_DATABASE.filter(e => project.selectedEquipmentIds.includes(e.id)), [project.selectedEquipmentIds]);
 
@@ -749,7 +751,7 @@ const App: React.FC = () => {
 
           {showAdvancedFilters && (
             <div className="bg-white p-10 rounded-[40px] border shadow-2xl space-y-8 animate-in slide-in-from-top-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">Marca</label>
                   <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
@@ -769,6 +771,14 @@ const App: React.FC = () => {
                   <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
                     <option value="All">Todos os Compressores</option>
                     {Object.values(CompressorType).map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase text-slate-400">Condensação</label>
+                  <select value={condensationFilter} onChange={e => setCondensationFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                    <option value="All">Todos os Tipos</option>
+                    <option value={CondensationType.AIR}>Condensação a Ar</option>
+                    <option value={CondensationType.WATER}>Condensação a Água</option>
                   </select>
                 </div>
               </div>
