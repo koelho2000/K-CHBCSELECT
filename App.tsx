@@ -47,6 +47,7 @@ const App: React.FC = () => {
   const [loadAnalysisAI, setLoadAnalysisAI] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectFileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const selectionSheetRef = useRef<HTMLDivElement>(null);
   
@@ -214,6 +215,30 @@ const App: React.FC = () => {
     downloadAnchorNode.remove();
   };
 
+  const handleOpenProjectJSON = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        const loadedProject = JSON.parse(text) as ProjectData;
+        // Basic validation - check if it looks like a project
+        if (loadedProject.projectName) {
+          setProject(loadedProject);
+          setActiveTab('config'); // Jump to config to see loaded data
+        } else {
+          alert("Ficheiro de projeto inválido.");
+        }
+      } catch (error) {
+        alert("Erro ao ler o ficheiro de projeto.");
+      }
+    };
+    reader.readAsText(file);
+    // Reset the input value to allow opening the same file again if needed
+    event.target.value = '';
+  };
+
   const handleGenerateReport = async () => {
     setIsGeneratingReport(true);
     setGeneratedReport(null);
@@ -350,8 +375,18 @@ const App: React.FC = () => {
   const mainEquipment = useMemo(() => OEM_DATABASE.find(u => u.id === selectedReportUnitId) || selectedUnits[0] || null, [selectedReportUnitId, selectedUnits]);
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={setActiveTab} onNew={() => window.location.reload()} onOpen={() => {}} onSave={handleSaveJSON}>
+    <Layout 
+      activeTab={activeTab} 
+      setActiveTab={setActiveTab} 
+      onNew={() => window.location.reload()} 
+      onOpen={() => projectFileInputRef.current?.click()} 
+      onSave={handleSaveJSON}
+    >
       
+      {/* Hidden File Inputs */}
+      <input type="file" ref={projectFileInputRef} onChange={handleOpenProjectJSON} className="hidden" accept=".json" />
+      <input type="file" ref={fileInputRef} onChange={handleImportCSV} className="hidden" accept=".csv" />
+
       {/* Global Modals */}
       {viewingEquipmentId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">
@@ -534,7 +569,6 @@ const App: React.FC = () => {
               <button onClick={() => fileInputRef.current?.click()} className="px-6 py-3 bg-white border-2 border-slate-100 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-slate-50 active:scale-95">
                 <FileUp size={18} /> Carregar CSV
               </button>
-              <input type="file" ref={fileInputRef} onChange={handleImportCSV} className="hidden" />
             </div>
           </header>
 
