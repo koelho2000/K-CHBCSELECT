@@ -75,6 +75,7 @@ const generateMockData = (): OEMEquipment[] => {
         eer,
         cop: 0,
         eseer: 4.8 + Math.random() * 1.5,
+        scop: 0,
         refrigerant,
         compressorType: compressor,
         dimensions: dims,
@@ -124,6 +125,7 @@ const generateMockData = (): OEMEquipment[] => {
         eer,
         cop: 3.3 + Math.random() * 0.7,
         eseer: 4.1 + Math.random() * 1.2,
+        scop: 3.8 + Math.random() * 0.8,
         refrigerant: sol.refr,
         compressorType: sol.comp,
         dimensions: dims,
@@ -161,6 +163,7 @@ const generateMockData = (): OEMEquipment[] => {
         eer,
         cop: 3.5,
         eseer: 4.5,
+        scop: 4.2,
         refrigerant: sol.refr,
         compressorType: sol.comp,
         dimensions: dims,
@@ -198,6 +201,7 @@ const generateMockData = (): OEMEquipment[] => {
         eer, 
         cop: 5.1 + Math.random(), 
         eseer: 6.2 + Math.random() * 2,
+        scop: 5.8 + Math.random() * 1.5,
         refrigerant: sol.refr,
         compressorType: sol.comp,
         dimensions: dims,
@@ -243,41 +247,6 @@ const SEASONAL_YEAR = [0.6, 0.5, 0.7, 0.8, 0.9, 1.0, 1.0, 0.9, 0.8, 0.7, 0.6, 0.
 
 export const STANDARD_PROFILES: StandardProfile[] = [
   {
-    name: "24h Todos os dias",
-    weekday: Array(24).fill(1),
-    weekend: Array(24).fill(1),
-    weekly: Array(7).fill(1),
-    monthly: Array(12).fill(1)
-  },
-  {
-    name: "24h Dias úteis",
-    weekday: Array(24).fill(1),
-    weekend: Array(24).fill(0),
-    weekly: [1, 1, 1, 1, 1, 0, 0],
-    monthly: Array(12).fill(1)
-  },
-  {
-    name: "8h Dias úteis (09-17h)",
-    weekday: Array(24).fill(0).map((_, i) => (i >= 9 && i < 17 ? 1 : 0)),
-    weekend: Array(24).fill(0),
-    weekly: [1, 1, 1, 1, 1, 0, 0],
-    monthly: SEASONAL_YEAR
-  },
-  {
-    name: "16h Dias úteis (07-23h)",
-    weekday: Array(24).fill(0).map((_, i) => (i >= 7 && i < 23 ? 1 : 0)),
-    weekend: Array(24).fill(0),
-    weekly: [1, 1, 1, 1, 1, 0, 0],
-    monthly: SEASONAL_YEAR
-  },
-  {
-    name: "Comercial (08-20h)",
-    weekday: Array(24).fill(0).map((_, i) => (i >= 8 && i < 20 ? 1 : 0)),
-    weekend: Array(24).fill(0).map((_, i) => (i >= 9 && i < 13 ? 0.5 : 0)),
-    weekly: [1, 1, 1, 1, 1, 1, 0],
-    monthly: SEASONAL_YEAR
-  },
-  {
     name: "Data Center (Constante 100%)",
     weekday: Array(24).fill(1),
     weekend: Array(24).fill(1),
@@ -285,42 +254,102 @@ export const STANDARD_PROFILES: StandardProfile[] = [
     monthly: Array(12).fill(1)
   },
   {
-    name: "Hotelaria (Picos M/N)",
+    name: "Centros Comerciais (RECS)",
+    weekday: Array(24).fill(0.2).map((v, i) => (i >= 9 && i < 23 ? 1.0 : v)),
+    weekend: Array(24).fill(0.2).map((v, i) => (i >= 9 && i < 23 ? 1.0 : v)),
+    weekly: Array(7).fill(1),
+    monthly: SEASONAL_YEAR
+  },
+  {
+    name: "Escritórios (RECS 08-20h)",
+    weekday: Array(24).fill(0).map((_, i) => (i >= 8 && i < 20 ? 1 : 0)),
+    weekend: Array(24).fill(0),
+    weekly: [1, 1, 1, 1, 1, 0, 0],
+    monthly: SEASONAL_YEAR
+  },
+  {
+    name: "Grande Superfície Comercial",
+    weekday: Array(24).fill(0.15).map((v, i) => (i >= 8 && i < 22 ? 1.0 : v)),
+    weekend: Array(24).fill(0.15).map((v, i) => (i >= 8 && i < 22 ? 1.0 : v)),
+    weekly: Array(7).fill(1),
+    monthly: SEASONAL_YEAR
+  },
+  {
+    name: "Ginásios / Health Club",
+    weekday: Array(24).fill(0.2).map((v, i) => {
+      if (i >= 7 && i < 10) return 1.0;
+      if (i >= 12 && i < 14) return 0.8;
+      if (i >= 17 && i < 22) return 1.0;
+      if (i >= 10 && i < 17) return 0.5;
+      return v;
+    }),
+    weekend: Array(24).fill(0.2).map((v, i) => (i >= 9 && i < 14 ? 0.9 : 0.4)),
+    weekly: Array(7).fill(1),
+    monthly: CONSTANT_YEAR
+  },
+  {
+    name: "Restauração (Almoço/Jantar)",
+    weekday: Array(24).fill(0.1).map((v, i) => {
+      if (i >= 12 && i < 15) return 1.0;
+      if (i >= 19 && i < 23) return 1.0;
+      if (i >= 15 && i < 19) return 0.3;
+      return v;
+    }),
+    weekend: Array(24).fill(0.1).map((v, i) => {
+      if (i >= 12 && i < 16) return 1.0;
+      if (i >= 19 && i < 0) return 1.0;
+      return 0.4;
+    }),
+    weekly: Array(7).fill(1),
+    monthly: CONSTANT_YEAR
+  },
+  {
+    name: "Hospitalar (RECS 24h)",
+    weekday: Array(24).fill(0.5).map((v, i) => (i >= 8 && i < 21 ? 1.0 : v)),
+    weekend: Array(24).fill(0.5).map((v, i) => (i >= 9 && i < 19 ? 0.8 : v)),
+    weekly: Array(7).fill(1),
+    monthly: CONSTANT_YEAR
+  },
+  {
+    name: "Hotelaria (RECS)",
     weekday: Array(24).fill(0.3).map((v, i) => {
       if ((i >= 7 && i < 10) || (i >= 19 && i < 23)) return 1;
       if (i >= 10 && i < 19) return 0.6;
       return v;
     }),
-    weekend: Array(24).fill(0.4).map((v, i) => {
-      if (i >= 8 && i < 23) return 1;
-      return v;
-    }),
+    weekend: Array(24).fill(0.4).map((v, i) => (i >= 8 && i < 23 ? 1 : v)),
     weekly: Array(7).fill(1),
     monthly: SEASONAL_YEAR
   },
   {
-    name: "Hospitalar (24h Dinâmico)",
-    weekday: Array(24).fill(0.6).map((v, i) => (i >= 8 && i < 20 ? 1 : v)),
-    weekend: Array(24).fill(0.6).map((v, i) => (i >= 9 && i < 18 ? 0.8 : v)),
-    weekly: Array(7).fill(1),
-    monthly: CONSTANT_YEAR
-  },
-  {
-    name: "Escolar (08-18h)",
+    name: "Escolar (RECS 08-18h)",
     weekday: Array(24).fill(0).map((_, i) => (i >= 8 && i < 18 ? 1 : 0)),
     weekend: Array(24).fill(0),
     weekly: [1, 1, 1, 1, 1, 0, 0],
     monthly: [0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.2, 0.2, 1.0, 1.0, 1.0, 1.0]
   },
   {
-    name: "Residencial (Manhã/Noite)",
-    weekday: Array(24).fill(0.2).map((v, i) => {
-      if (i >= 6 && i < 9) return 0.9;
-      if (i >= 18 && i < 23) return 1.0;
-      return v;
-    }),
-    weekend: Array(24).fill(0.4).map((v, i) => (i >= 9 && i < 23 ? 1.0 : v)),
-    weekly: Array(7).fill(1),
+    name: "Museus e Centros Culturais",
+    weekday: Array(24).fill(0.2).map((v, i) => (i >= 10 && i < 19 ? 1.0 : v)),
+    weekend: Array(24).fill(0.2).map((v, i) => (i >= 10 && i < 20 ? 1.0 : v)),
+    weekly: [0, 1, 1, 1, 1, 1, 1],
     monthly: SEASONAL_YEAR
+  },
+  {
+    name: "Aeroportos / Hubs Transp.",
+    weekday: Array(24).fill(0.6).map((v, i) => {
+      if ((i >= 6 && i < 10) || (i >= 16 && i < 20)) return 1.0;
+      return 0.8;
+    }),
+    weekend: Array(24).fill(0.6).map((v, i) => (i >= 7 && i < 21 ? 1.0 : 0.8)),
+    weekly: Array(7).fill(1),
+    monthly: CONSTANT_YEAR
+  },
+  {
+    name: "Auditórios / Cinemas",
+    weekday: Array(24).fill(0).map((_, i) => (i >= 14 && i < 23 ? 1.0 : 0)),
+    weekend: Array(24).fill(0).map((_, i) => (i >= 11 && i < 23 ? 1.0 : 0)),
+    weekly: Array(7).fill(1),
+    monthly: CONSTANT_YEAR
   }
 ];

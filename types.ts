@@ -48,6 +48,7 @@ export interface OEMEquipment {
   eer: number;
   cop: number;
   eseer: number;
+  scop: number;
   refrigerant: Refrigerant;
   compressorType: CompressorType;
   dimensions: string;
@@ -101,4 +102,6 @@ export interface ProjectData {
   // Climate Data
   weatherData: WeatherDataPoint[];
   selectedDistrict: string;
+  selectedProfileName: string;
+  electricityPrice: number; // €/kWh
 }
