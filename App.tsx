@@ -28,6 +28,7 @@ import ReportTab from './components/tabs/ReportTab';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('home');
+  // State lifted from AnalysisTab to App level to sync between Report/Sheet
   const [selectedReportUnitId, setSelectedReportUnitId] = useState<string | null>(null);
   
   // Selection Filters
@@ -154,7 +155,7 @@ const App: React.FC = () => {
       onSave={handleSave}
     >
       {activeTab === 'home' && <HomeTab project={project} setActiveTab={setActiveTab} />}
-      {activeTab === 'config' && <ConfigTab project={project} setProject={setProject} setActiveTab={setActiveTab} />}
+      {activeTab === 'config' && <ConfigTab project={project} setProject={setProject} setActiveTab={setActiveTab} selectedReportUnitId={selectedReportUnitId} />}
       {activeTab === 'climate' && <ClimateTab project={project} setProject={setProject} generateWeather={generateWeather} />}
       {activeTab === 'loads' && <LoadsTab project={project} setProject={setProject} />}
       {activeTab === 'selection' && (
@@ -189,7 +190,7 @@ const App: React.FC = () => {
           selectedReportUnitId={selectedReportUnitId} 
         />
       )}
-      {activeTab === 'report' && <ReportTab project={project} />}
+      {activeTab === 'report' && <ReportTab project={project} selectedReportUnitId={selectedReportUnitId} />}
     </Layout>
   );
 };

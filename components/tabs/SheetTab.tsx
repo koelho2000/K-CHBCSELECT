@@ -44,7 +44,6 @@ const SheetTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
     const heatingFlow = mainEquipment.heatingCapacity / (1.163 * 5);
     
     // Circuito Secundário (Rejeição / Condensador) - Apenas para Water-Cooled
-    // Heat Rejection approx = Cooling Capacity + Power Input (P_abs = Q_cool / EER)
     const absorbedPower = mainEquipment.coolingCapacity / (mainEquipment.eer || 3);
     const heatRejection = mainEquipment.coolingCapacity + absorbedPower;
     const condenserFlow = heatRejection / (1.163 * 5);
@@ -175,6 +174,7 @@ const SheetTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
             <div className="flex justify-between items-start mb-10 border-b-4 border-slate-900 pb-8 relative">
               <div>
                 <h1 className="text-5xl font-black text-blue-900 tracking-tighter italic leading-none">{mainEquipment.brand}</h1>
+                <p className="text-2xl font-bold text-blue-600 tracking-tight mt-1 ml-1">{mainEquipment.model}</p>
                 <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.4em] mt-3 ml-1">K-CHBC Select Pro Suite • v2.5</p>
                 <div className="mt-6 space-y-1">
                    <p className="text-xs font-black text-slate-900 uppercase">Referência: {project.workReference}</p>
@@ -184,6 +184,7 @@ const SheetTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
 
               <div className="text-right text-[10px] font-bold text-slate-500 mt-2">
                 <div className="text-xl font-black text-blue-900 uppercase mb-4 border-b-2 border-blue-100 pb-2">Folha de Características</div>
+                <p>Equipamento: <span className="text-slate-900 font-black">{mainEquipment.brand} {mainEquipment.model}</span></p>
                 <p>Projecto: <span className="text-slate-900 font-black">{project.projectName}</span></p>
                 <p>Cliente: <span className="text-slate-900 font-black">{project.clientName}</span></p>
                 <p>Data de Emissão: <span className="text-slate-900 font-black">{new Date().toLocaleDateString('pt-PT')}</span></p>

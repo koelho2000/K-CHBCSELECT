@@ -28,7 +28,8 @@ import {
   Waves,
   Settings,
   ArrowRightLeft,
-  Droplets
+  Droplets,
+  Box
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, LineChart, Line, Legend, LabelList } from 'recharts';
 import { ProjectData, OEMEquipment, CondensationType } from '../../types';
@@ -37,9 +38,10 @@ import { generateTechnicalReport } from '../../services/geminiService';
 
 interface Props {
   project: ProjectData;
+  selectedReportUnitId: string | null;
 }
 
-const ReportTab: React.FC<Props> = ({ project }) => {
+const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
   const [generating, setGenerating] = useState(false);
   const [rawReportText, setRawReportText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -49,8 +51,11 @@ const ReportTab: React.FC<Props> = ({ project }) => {
     OEM_DATABASE.filter(e => project.selectedEquipmentIds.includes(e.id))
   , [project.selectedEquipmentIds]);
 
-  // Equipamento principal para a Folha de Dados (primeiro da lista ou o mais eficiente)
-  const mainUnit = useMemo(() => selectedUnits[0] || null, [selectedUnits]);
+  // Priority: 1. Manually selected for report in ROI tab, 2. First unit in selected list
+  const mainUnit = useMemo(() => {
+    if (selectedReportUnitId) return OEM_DATABASE.find(u => u.id === selectedReportUnitId) || null;
+    return selectedUnits[0] || null;
+  }, [selectedReportUnitId, selectedUnits]);
 
   // Cálculos Hidráulicos para a Folha de Dados integrada
   const hydraulics = useMemo(() => {
@@ -227,7 +232,7 @@ const ReportTab: React.FC<Props> = ({ project }) => {
                 <div><span className="text-[10px] font-black uppercase text-slate-400 block mb-1 tracking-widest">Entidade Beneficiária</span><p className="text-xl font-black text-slate-900 leading-tight">{project.clientName}</p></div>
                 <div className="pt-10">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Engenheiro Responsável</p>
-                    <p className="text-lg font-black text-slate-900">José Coelho</p>
+                    <p className="text-lg font-black text-slate-900">Eng. José Coelho</p>
                 </div>
               </div>
             </div>
@@ -509,15 +514,24 @@ const ReportTab: React.FC<Props> = ({ project }) => {
               </header>
 
               <div className="flex-1 space-y-8">
-                <div className="flex justify-between items-center bg-slate-50 p-8 rounded-[40px] border">
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-black uppercase text-blue-600 tracking-widest">Equipamento Seleccionado</span>
-                    <h4 className="text-2xl font-black text-slate-900">{mainUnit.brand} {mainUnit.model}</h4>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-tighter">{mainUnit.compressorType} • {mainUnit.refrigerant}</p>
+                <div className="flex justify-between items-start bg-slate-50 p-10 rounded-[40px] border relative overflow-hidden">
+                  <div className="absolute right-0 top-0 opacity-5 pointer-events-none p-4">
+                    <Box size={140} />
                   </div>
-                  <div className="text-right">
-                    <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">Código OEM</span>
-                    <p className="text-lg font-black text-slate-900">{mainUnit.id.toUpperCase()}</p>
+                  <div className="space-y-4 relative z-10">
+                    <span className="text-[11px] font-black uppercase text-blue-600 tracking-[0.2em]">Equipamento em Parecer</span>
+                    <div className="space-y-1">
+                      <h4 className="text-4xl font-black text-slate-900 leading-none tracking-tighter">{mainUnit.brand}</h4>
+                      <p className="text-2xl font-bold text-blue-600 tracking-tight">{mainUnit.model}</p>
+                    </div>
+                    <div className="flex gap-4 items-center">
+                       <span className="bg-slate-200 px-3 py-1 rounded-full text-[9px] font-black uppercase text-slate-600">{mainUnit.compressorType}</span>
+                       <span className="bg-blue-100 px-3 py-1 rounded-full text-[9px] font-black uppercase text-blue-700">{mainUnit.refrigerant}</span>
+                    </div>
+                  </div>
+                  <div className="text-right relative z-10">
+                    <span className="text-[10px] font-black uppercase text-slate-400 block mb-1 tracking-widest">Referência OEM</span>
+                    <p className="text-xl font-black text-slate-900">{mainUnit.id.toUpperCase()}</p>
                   </div>
                 </div>
 
@@ -553,12 +567,12 @@ const ReportTab: React.FC<Props> = ({ project }) => {
                   </div>
                 </div>
 
-                <div className="bg-slate-900 p-8 rounded-[40px] text-white flex items-center gap-8">
+                <div className="bg-slate-900 p-8 rounded-[40px] text-white flex items-center gap-8 shadow-xl">
                   <div className="shrink-0 bg-blue-600 p-4 rounded-3xl"><ShieldCheck size={30} /></div>
                   <div className="space-y-1">
-                    <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Conformidade e Projecto</p>
+                    <p className="text-[10px] font-black uppercase text-blue-400 tracking-widest">Conformidade de Projecto</p>
                     <p className="text-xs font-medium text-slate-300 leading-relaxed text-justify">
-                      O equipamento seleccionado cumpre com os requisitos de Ecodesign (ErP) Tier 2. Dimensões de projecto: {mainUnit.dimensions} mm. Recomendada a instalação de apoios antivibráticos para redução de transmissão estrutural (Lw={mainUnit.noiseLevel} dB).
+                      O equipamento seleccionado cumpre com os requisitos de Ecodesign (ErP) Tier 2. Dimensões: {mainUnit.dimensions} mm. Recomendada a instalação de apoios antivibráticos para redução de transmissão estrutural (Lw={mainUnit.noiseLevel} dB).
                     </p>
                   </div>
                 </div>
