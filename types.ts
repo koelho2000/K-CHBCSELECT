@@ -29,6 +29,15 @@ export enum CompressorType {
   TURBOCOR = 'Turbocor'
 }
 
+export interface WeatherDataPoint {
+  hour: number;
+  month: number;
+  day: number;
+  tbs: number; // Temperatura Seca
+  rh: number;  // Humidade Relativa (%)
+  tbh: number; // Temperatura Húmida
+}
+
 export interface OEMEquipment {
   id: string;
   brand: string;
@@ -50,6 +59,15 @@ export interface OEMEquipment {
   minAmbientTemp: number; // °C
   maxAmbientTemp: number; // °C
   efficiencyCurve: { x: number; y: number }[]; // Part load vs Efficiency
+  
+  // Installation Data
+  amperage: number; // A
+  voltage: string; // V/Ph/Hz
+  cableSection: number; // mm2
+  circuitBreaker: string; // A
+  pipeDN: number; // mm
+  baseDimensions: string; // mm
+  refrigerantCharge: number; // kg
 }
 
 export interface ProjectData {
@@ -80,4 +98,7 @@ export interface ProjectData {
   instrumentation: string[];
   valves: string[];
   controlType: string;
+  // Climate Data
+  weatherData: WeatherDataPoint[];
+  selectedDistrict: string;
 }

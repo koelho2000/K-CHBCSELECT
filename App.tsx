@@ -8,19 +8,21 @@ import {
   Refrigerant, 
   CompressorType, 
   OEMEquipment,
-  CondensationType
+  CondensationType,
+  WeatherDataPoint
 } from './types';
 import { 
   OEM_DATABASE, 
   DEFAULT_WEEKDAY_LOAD, 
   DEFAULT_WEEKEND_LOAD,
   STANDARD_PROFILES,
-  BRANDS
+  BRANDS,
+  PT_DISTRICTS_CLIMATE
 } from './constants';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, 
   ResponsiveContainer, AreaChart, Area, ReferenceLine,
-  BarChart, Bar, Cell, Legend
+  BarChart, Bar, Cell, Legend, ComposedChart
 } from 'recharts';
 import { generateTechnicalReport } from './services/geminiService';
 import { 
@@ -30,12 +32,13 @@ import {
   Activity, Info, Scale, CheckCircle2, AlertCircle,
   Database, ArrowUpRight, Gauge, Briefcase, Globe,
   Settings, Droplets, Sun, Snowflake, Zap, MapPin, Building2, User, Table, LayoutGrid, Clock, FileDown, FileUp, ListChecks, Copy, FileCode, FileType, Check, Wand2, Eye, X, Award, CheckCircle, Calculator, SlidersHorizontal, ChevronLeft,
-  BarChart2, Star, ClipboardList, FileOutput, Share2, Lightbulb, ThermometerSnowflake, Flame
+  BarChart2, Star, ClipboardList, FileOutput, Share2, Lightbulb, ThermometerSnowflake, Flame, File, ZapIcon, CloudSun, ExternalLink
 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('home');
   const [copySuccess, setCopySuccess] = useState(false);
+  const [reportCopySuccess, setReportCopySuccess] = useState(false);
   const [viewingEquipmentId, setViewingEquipmentId] = useState<string | null>(null);
   const [selectedReportUnitId, setSelectedReportUnitId] = useState<string | null>(null);
   const [isComparing, setIsComparing] = useState(false);
@@ -47,6 +50,7 @@ const App: React.FC = () => {
   const [loadAnalysisAI, setLoadAnalysisAI] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const weatherFileInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const reportRef = useRef<HTMLDivElement>(null);
   const selectionSheetRef = useRef<HTMLDivElement>(null);
@@ -78,20 +82,178 @@ const App: React.FC = () => {
     budget: 0,
     instrumentation: ['Sonda Temp PT100', 'Fluxostato'],
     valves: ['Válvula de 3 vias', 'Válvula de equilíbrio'],
-    controlType: 'BMS Integrado'
+    controlType: 'BMS Integrado',
+    weatherData: [],
+    selectedDistrict: 'Lisboa'
   });
 
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [generatedReport, setGeneratedReport] = useState<string | null>(null);
 
-  // Filters state
+  // Psychrometric helper: Calculate Wet Bulb (TBH) approx.
+  const calculateWetBulb = (tbs: number, rh: number) => {
+    // Stull Formula (approximate)
+    const Tw = tbs * Math.atan(0.151977 * Math.pow(rh + 8.313659, 0.5)) +
+               Math.atan(tbs + rh) - Math.atan(rh - 1.676331) +
+               0.00391838 * Math.pow(rh, 1.5) * Math.atan(0.023101 * rh) - 4.686035;
+    return Tw;
+  };
+
+  const generateWeatherFromDistrict = useCallback((district: string) => {
+    const info = PT_DISTRICTS_CLIMATE[district];
+    if (!info) return;
+
+    const data: WeatherDataPoint[] = [];
+    const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let hourCounter = 0;
+
+    for (let m = 0; m < 12; m++) {
+      const seasonalBase = Math.cos((m - 7) * Math.PI / 6);
+      const monthAvgT = info.minT + (info.maxT - info.minT) * (seasonalBase + 1) / 2;
+
+      for (let d = 0; d < daysInMonth[m]; d++) {
+        for (let h = 0; h < 24; h++) {
+          const dailyVar = Math.sin((h - 8) * Math.PI / 12);
+          const tbs = monthAvgT + (5 * dailyVar) + (Math.random() * 2 - 1);
+          const rh = info.avgRH - (15 * dailyVar) + (Math.random() * 4 - 2);
+          const tbh = calculateWetBulb(tbs, rh);
+
+          data.push({
+            hour: hourCounter++,
+            month: m + 1,
+            day: d + 1,
+            tbs: parseFloat(tbs.toFixed(1)),
+            rh: Math.min(100, Math.max(0, parseFloat(rh.toFixed(1)))),
+            tbh: parseFloat(tbh.toFixed(1))
+          });
+        }
+      }
+    }
+    setProject(prev => ({ ...prev, weatherData: data, selectedDistrict: district }));
+  }, []);
+
+  useEffect(() => {
+    if (project.weatherData.length === 0) {
+      generateWeatherFromDistrict('Lisboa');
+    }
+  }, [generateWeatherFromDistrict, project.weatherData.length]);
+
+  const handleEPWImport = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      const lines = text.split("\n");
+      const data: WeatherDataPoint[] = [];
+      let valid = false;
+
+      lines.forEach((line, idx) => {
+        const parts = line.split(",");
+        if (parts.length > 30) {
+          valid = true;
+          const month = parseInt(parts[1]);
+          const day = parseInt(parts[2]);
+          const hour = parseInt(parts[3]);
+          const tbs = parseFloat(parts[6]);
+          const rh = parseFloat(parts[8]);
+          if (!isNaN(tbs) && !isNaN(rh)) {
+            data.push({
+              hour: idx,
+              month,
+              day,
+              tbs,
+              rh,
+              tbh: calculateWetBulb(tbs, rh)
+            });
+          }
+        }
+      });
+
+      if (valid && data.length > 0) {
+        setProject(prev => ({ ...prev, weatherData: data.slice(0, 8760), selectedDistrict: `EPW: ${file.name}` }));
+      } else {
+        alert("Ficheiro EPW inválido.");
+      }
+    };
+    reader.readAsText(file);
+    event.target.value = '';
+  };
+
+  const weatherStats = useMemo(() => {
+    if (project.weatherData.length === 0) return null;
+    const tbsValues = project.weatherData.map(d => d.tbs);
+    const tbhValues = project.weatherData.map(d => d.tbh);
+    const rhValues = project.weatherData.map(d => d.rh);
+    return {
+      maxTBS: Math.max(...tbsValues),
+      minTBS: Math.min(...tbsValues),
+      avgTBS: tbsValues.reduce((a, b) => a + b, 0) / tbsValues.length,
+      maxTBH: Math.max(...tbhValues),
+      avgRH: rhValues.reduce((a, b) => a + b, 0) / rhValues.length,
+      minRH: Math.min(...rhValues),
+      maxRH: Math.max(...rhValues)
+    };
+  }, [project.weatherData]);
+
+  const monthlyWeatherData = useMemo(() => {
+    const months = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+    return months.map((m, i) => {
+      const monthPoints = project.weatherData.filter(d => d.month === i + 1);
+      if (monthPoints.length === 0) return { name: m, tbs: 0, tbh: 0, rh: 0 };
+      return {
+        name: m,
+        tbs: monthPoints.reduce((a, b) => a + b.tbs, 0) / monthPoints.length,
+        tbh: monthPoints.reduce((a, b) => a + b.tbh, 0) / monthPoints.length,
+        rh: monthPoints.reduce((a, b) => a + b.rh, 0) / monthPoints.length
+      };
+    });
+  }, [project.weatherData]);
+
+  const tbsHistogram = useMemo(() => {
+    const bins: Record<number, number> = {};
+    project.weatherData.forEach(d => {
+      const bin = Math.floor(d.tbs);
+      bins[bin] = (bins[bin] || 0) + 1;
+    });
+    return Object.keys(bins).sort((a, b) => parseInt(a) - parseInt(b)).map(k => ({
+      temp: k + "ºC",
+      hours: bins[parseInt(k)]
+    }));
+  }, [project.weatherData]);
+
+  const tbhHistogram = useMemo(() => {
+    const bins: Record<number, number> = {};
+    project.weatherData.forEach(d => {
+      const bin = Math.floor(d.tbh);
+      bins[bin] = (bins[bin] || 0) + 1;
+    });
+    return Object.keys(bins).sort((a, b) => parseInt(a) - parseInt(b)).map(k => ({
+      temp: k + "ºC",
+      hours: bins[parseInt(k)]
+    }));
+  }, [project.weatherData]);
+
+  const humidityHistogram = useMemo(() => {
+    const bins: Record<number, number> = {};
+    project.weatherData.forEach(d => {
+      const bin = Math.floor(d.rh / 5) * 5;
+      bins[bin] = (bins[bin] || 0) + 1;
+    });
+    return Object.keys(bins).sort((a, b) => parseInt(a) - parseInt(b)).map(k => ({
+      rh: k + "%",
+      hours: bins[parseInt(k)]
+    }));
+  }, [project.weatherData]);
+
+  // Fix state destructuring to include setters
   const [brandFilter, setBrandFilter] = useState<string>('All');
   const [refrigerantFilter, setRefrigerantFilter] = useState<string>('All');
   const [compressorFilter, setCompressorFilter] = useState<string>('All');
-  const [condensationFilter, setCondensationFilter] = useState<string>('All'); 
-  const [modeFilter, setModeFilter] = useState<string>('All'); 
-  const [minTempFilter, setMinTempFilter] = useState<string>(''); 
-  const [maxTempFilter, setMaxTempFilter] = useState<string>(''); 
+  const [condensationFilter, setCondensationFilter] = useState<string>('All');
+  const [modeFilter, setModeFilter] = useState<string>('All');
+  const [minTempFilter, setMinTempFilter] = useState<string>('');
+  const [maxTempFilter, setMaxTempFilter] = useState<string>('');
   const [searchTerm, setSearchTerm] = useState('');
 
   const stats = useMemo(() => {
@@ -227,7 +389,6 @@ const App: React.FC = () => {
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
     downloadAnchorNode.setAttribute("download", `project_hvac_${project.projectName.replace(/\s+/g, '_')}.json`);
-    document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click();
     downloadAnchorNode.remove();
   };
@@ -374,6 +535,40 @@ const App: React.FC = () => {
     } catch (err) { console.error(err); }
   };
 
+  const handleReportExportDOC = () => {
+    if (!reportRef.current) return;
+    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'></head><body>`;
+    const sourceHTML = header + reportRef.current.innerHTML + `</body></html>`;
+    const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Relatorio_Tecnico_${project.workReference}.doc`;
+    a.click();
+  };
+
+  const handleReportExportHTML = () => {
+    if (!reportRef.current) return;
+    const content = reportRef.current.innerHTML;
+    const blob = new Blob([`<html><head><style>body{font-family:sans-serif;background:#f0f0f0;} .page-break{background:white;margin:20px auto;padding:25mm;width:210mm;min-height:297mm;box-shadow:0 0 10px rgba(0,0,0,0.1);}</style></head><body>${content}</body></html>`], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Relatorio_Tecnico_${project.workReference}.html`;
+    a.click();
+  };
+
+  const handleReportCopyToClipboard = async () => {
+    if (!reportRef.current) return;
+    try {
+      const html = reportRef.current.innerHTML;
+      const data = [new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }) })];
+      await navigator.clipboard.write(data);
+      setReportCopySuccess(true);
+      setTimeout(() => setReportCopySuccess(false), 2000);
+    } catch (err) { console.error(err); }
+  };
+
   const efficiencyChartData = useMemo(() => {
     const xPoints = [25, 50, 75, 100];
     return xPoints.map(x => {
@@ -388,6 +583,72 @@ const App: React.FC = () => {
 
   const mainEquipment = useMemo(() => OEM_DATABASE.find(u => u.id === selectedReportUnitId) || selectedUnits[0] || null, [selectedReportUnitId, selectedUnits]);
 
+  // NEW PERFORMANCE CALCULATION 8760h
+  const performance8760 = useMemo(() => {
+    if (!mainEquipment || project.weatherData.length < 8760) return null;
+    
+    const data: any[] = [];
+    let totalThermalEnergy = 0;
+    let totalElecEnergy = 0;
+
+    project.weatherData.forEach((w, i) => {
+      const thermalLoad = project.hourlyLoads[i] || 0;
+      const isHeating = project.targetTemperature > 25;
+      
+      const nominalCap = isHeating ? mainEquipment.heatingCapacity : mainEquipment.coolingCapacity;
+      const nominalEff = isHeating ? mainEquipment.cop : mainEquipment.eer;
+      
+      // Part Load Factor (PLF) calculation via linear interpolation
+      const loadRatio = nominalCap > 0 ? (thermalLoad / nominalCap) : 0;
+      const pl = Math.max(25, Math.min(100, loadRatio * 100));
+      
+      const lower = mainEquipment.efficiencyCurve.reduce((prev, curr) => (curr.x <= pl ? curr : prev), mainEquipment.efficiencyCurve[0]);
+      const upper = mainEquipment.efficiencyCurve.reduce((prev, curr) => (curr.x >= pl ? (prev.x > curr.x ? curr : prev) : curr), mainEquipment.efficiencyCurve[mainEquipment.efficiencyCurve.length-1]);
+      
+      let plf = lower.y;
+      if (upper.x !== lower.x) {
+        plf = lower.y + (upper.y - lower.y) * (pl - lower.x) / (upper.x - lower.x);
+      }
+
+      // Outdoor Temperature Correction (Estimate)
+      // Reference: Cooling 35C, Heating 7C
+      let tempCorr = 1.0;
+      if (mainEquipment.condensationType === CondensationType.AIR) {
+        if (!isHeating) {
+          tempCorr = 1 - (w.tbs - 35) * 0.032; // ~3.2% loss per degree above 35
+        } else {
+          tempCorr = 1 + (w.tbs - 7) * 0.025; // ~2.5% variation around 7C
+        }
+      }
+      
+      const realEff = nominalEff * plf * tempCorr;
+      const elecInput = realEff > 0 ? thermalLoad / realEff : 0;
+
+      totalThermalEnergy += thermalLoad;
+      totalElecEnergy += elecInput;
+
+      if (i % 24 === 0) { // Sampling for chart performance
+        data.push({
+          hour: i,
+          eff: realEff,
+          load: thermalLoad,
+          elec: elecInput,
+          temp: w.tbs
+        });
+      }
+    });
+
+    const seasonalAvg = totalElecEnergy > 0 ? totalThermalEnergy / totalElecEnergy : 0;
+
+    return {
+      hourly: data,
+      totalThermal: totalThermalEnergy / 1000, // MWh
+      totalElec: totalElecEnergy / 1000, // MWh
+      seasonalAvg,
+      label: project.targetTemperature > 25 ? 'SCOP Real' : 'SEER Real'
+    };
+  }, [mainEquipment, project.weatherData, project.hourlyLoads, project.targetTemperature]);
+
   return (
     <Layout 
       activeTab={activeTab} 
@@ -399,6 +660,7 @@ const App: React.FC = () => {
       
       <input type="file" ref={projectFileInputRef} onChange={handleOpenProjectJSON} className="hidden" accept=".json" />
       <input type="file" ref={fileInputRef} onChange={handleImportCSV} className="hidden" accept=".csv" />
+      <input type="file" ref={weatherFileInputRef} onChange={handleEPWImport} className="hidden" accept=".epw" />
 
       {viewingEquipmentId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in duration-200">
@@ -549,10 +811,295 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex justify-end">
-            <button onClick={() => setActiveTab('loads')} className="px-12 py-5 bg-blue-600 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition shadow-2xl shadow-blue-600/30 active:scale-95">
-              Próximo: Cargas <ChevronRight size={24} />
+            <button onClick={() => setActiveTab('climate')} className="px-12 py-5 bg-blue-600 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition shadow-2xl active:scale-95">
+              Próximo: Clima <ChevronRight size={24} />
             </button>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'climate' && (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6 pb-20">
+          <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 bg-white p-8 rounded-[40px] border shadow-xl">
+            <div className="flex-1">
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Ficheiro Climático 8760h</h2>
+              <p className="text-slate-500 mt-2">Dados meteorológicos anuais para simulação dinâmica de performance.</p>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <a 
+                href="https://koelho2000.github.io/K-CLIMEPWCREATE/" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="px-6 py-4 bg-indigo-50 border-2 border-indigo-100 text-indigo-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-indigo-100 transition shadow-sm"
+              >
+                <ExternalLink size={18} /> Gerador Climático K2000
+              </a>
+              <button onClick={() => weatherFileInputRef.current?.click()} className="px-6 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest flex items-center gap-2 hover:bg-slate-50 transition shadow-sm active:scale-95">
+                <FileUp size={18} /> Importar EPW
+              </button>
+            </div>
+          </header>
+
+          <div className="flex flex-col gap-10">
+            <div className="flex flex-col lg:flex-row gap-10">
+              <div className="lg:w-1/3 bg-white p-8 rounded-[40px] border shadow-xl flex flex-col">
+                <label className="text-[10px] font-black uppercase text-slate-400 tracking-widest block mb-4">Selecção de Distrito</label>
+                <div className="max-h-64 overflow-y-auto pr-2 custom-scrollbar space-y-1">
+                  {Object.keys(PT_DISTRICTS_CLIMATE).map(district => (
+                    <button 
+                      key={district} 
+                      onClick={() => generateWeatherFromDistrict(district)}
+                      className={`w-full text-left p-3.5 text-sm font-bold rounded-xl border-2 transition-all flex items-center justify-between ${project.selectedDistrict === district ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-slate-50 border-transparent hover:border-blue-200 text-slate-600'}`}
+                    >
+                      {district} <MapPin size={14} className={project.selectedDistrict === district ? 'opacity-100' : 'opacity-20'} />
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {weatherStats && (
+                <div className="lg:flex-1 bg-slate-900 p-10 rounded-[40px] text-white shadow-2xl">
+                  <h4 className="text-[10px] font-black uppercase opacity-40 tracking-[0.2em] mb-8">Estatística do Ficheiro Seleccionado</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8">
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">TBS Pico</span><span className="text-2xl font-black text-orange-400">{weatherStats.maxTBS.toFixed(1)}ºC</span></div>
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">TBS Mín.</span><span className="text-2xl font-black text-blue-300">{weatherStats.minTBS.toFixed(1)}ºC</span></div>
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">TBH Pico</span><span className="text-2xl font-black text-emerald-400">{weatherStats.maxTBH.toFixed(1)}ºC</span></div>
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">HR Média</span><span className="text-2xl font-black">{weatherStats.avgRH.toFixed(0)}%</span></div>
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">HR Mín.</span><span className="text-2xl font-black text-orange-200">{weatherStats.minRH.toFixed(0)}%</span></div>
+                    <div><span className="text-[9px] uppercase font-black text-slate-500 block mb-1">HR Máx.</span><span className="text-2xl font-black text-blue-500">{weatherStats.maxRH.toFixed(0)}%</span></div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col lg:flex-row gap-10">
+              <div className="lg:w-1/2 bg-white p-10 rounded-[50px] border shadow-2xl h-[450px] flex flex-col">
+                <h3 className="text-xl font-black mb-8 flex items-center gap-3"><Activity size={22} className="text-blue-600" /> Perfil Mensal Temperaturas</h3>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <ComposedChart data={monthlyWeatherData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={11} fontStyle="bold" />
+                      <YAxis stroke="#94a3b8" fontSize={11} fontStyle="bold" unit="ºC" />
+                      <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)'}} />
+                      <Bar dataKey="tbs" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={24} name="TBS Média" />
+                      <Line type="monotone" dataKey="tbh" stroke="#818cf8" strokeWidth={3} dot={{r: 4}} name="TBH Média" />
+                    </ComposedChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+              <div className="lg:w-1/2 bg-white p-10 rounded-[50px] border shadow-2xl h-[450px] flex flex-col">
+                <h3 className="text-xl font-black mb-8 flex items-center gap-3"><Droplets size={22} className="text-emerald-500" /> Perfil Mensal Humidade</h3>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={monthlyWeatherData}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} fontSize={11} fontStyle="bold" />
+                      <YAxis stroke="#94a3b8" fontSize={11} fontStyle="bold" unit="%" />
+                      <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)'}} />
+                      <Area type="monotone" dataKey="rh" stroke="#10b981" fill="#10b981" fillOpacity={0.1} strokeWidth={3} name="Humidade Média" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white p-10 rounded-[50px] border shadow-2xl h-[500px] flex flex-col">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-xl font-black flex items-center gap-3"><Globe size={22} className="text-blue-500" /> Perfil Climático Anual 8760h (TBS, TBH, HR)</h3>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-600"></div><span className="text-[9px] font-black uppercase text-slate-400">Seca</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-indigo-300"></div><span className="text-[9px] font-black uppercase text-slate-400">Húmida</span></div>
+                  <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-400"></div><span className="text-[9px] font-black uppercase text-slate-400">Humidade %</span></div>
+                </div>
+              </div>
+              <div className="flex-1">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={project.weatherData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                    <XAxis dataKey="hour" hide />
+                    <YAxis yAxisId="left" stroke="#94a3b8" fontSize={11} fontStyle="bold" unit="ºC" />
+                    <YAxis yAxisId="right" orientation="right" stroke="#10b981" fontSize={11} fontStyle="bold" unit="%" />
+                    <Tooltip labelFormatter={(v) => `Hora: ${v}`} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)'}} />
+                    <Area yAxisId="left" type="monotone" dataKey="tbs" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.05} strokeWidth={1} name="Temp. Seca" />
+                    <Area yAxisId="left" type="monotone" dataKey="tbh" stroke="#818cf8" fill="#818cf8" fillOpacity={0.05} strokeWidth={1} name="Temp. Húmida" />
+                    <Area yAxisId="right" type="monotone" dataKey="rh" stroke="#10b981" fill="#10b981" fillOpacity={0.05} strokeWidth={1} name="Humidade Rel." />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+              <div className="bg-white p-8 rounded-[50px] border shadow-2xl h-[420px] flex flex-col">
+                <h3 className="text-lg font-black mb-6 flex items-center gap-3 text-slate-700"><Layers size={20} className="text-blue-600" /> Histograma TBS (Seca)</h3>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={tbsHistogram}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="temp" fontSize={9} axisLine={false} tickLine={false} />
+                      <YAxis hide />
+                      <Tooltip cursor={{fill: 'transparent'}} />
+                      <Bar dataKey="hours" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Horas" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[50px] border shadow-2xl h-[420px] flex flex-col">
+                <h3 className="text-lg font-black mb-6 flex items-center gap-3 text-slate-700"><Wind size={20} className="text-indigo-500" /> Histograma TBH (Húmida)</h3>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={tbhHistogram}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="temp" fontSize={9} axisLine={false} tickLine={false} />
+                      <YAxis hide />
+                      <Tooltip cursor={{fill: 'transparent'}} />
+                      <Bar dataKey="hours" fill="#818cf8" radius={[4, 4, 0, 0]} name="Horas" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[50px] border shadow-2xl h-[420px] flex flex-col">
+                <h3 className="text-lg font-black mb-6 flex items-center gap-3 text-slate-700"><Droplets size={20} className="text-emerald-600" /> Histograma RH (Humidade)</h3>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={humidityHistogram}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="rh" fontSize={9} axisLine={false} tickLine={false} />
+                      <YAxis hide />
+                      <Tooltip cursor={{fill: 'transparent'}} />
+                      <Bar dataKey="hours" fill="#10b981" radius={[4, 4, 0, 0]} name="Horas" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'performance' && (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6 pb-20">
+          <header className="bg-white p-8 rounded-[40px] border shadow-xl flex flex-col md:flex-row justify-between items-center gap-6">
+            <div className="flex-1">
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Cálculo de Eficiência Dinâmica</h2>
+              <p className="text-slate-500 mt-2">Evolução do COP/EER com base na carga térmica e temperatura exterior (8760h).</p>
+            </div>
+            {mainEquipment && (
+              <div className="bg-blue-50 px-6 py-4 rounded-3xl border border-blue-100 flex items-center gap-4">
+                <div className="p-3 bg-blue-600 text-white rounded-2xl"><Zap size={24}/></div>
+                <div>
+                   <span className="text-[10px] font-black uppercase text-blue-400 block tracking-widest">A analisar:</span>
+                   <span className="font-black text-blue-900">{mainEquipment.brand} {mainEquipment.model}</span>
+                </div>
+              </div>
+            )}
+          </header>
+
+          {!mainEquipment ? (
+            <div className="p-32 bg-slate-100/50 border-4 border-dashed border-slate-200 rounded-[60px] text-center w-full max-w-5xl mx-auto space-y-6">
+              <AlertCircle className="mx-auto text-slate-200" size={100} />
+              <p className="text-slate-400 font-medium italic text-lg">Defina uma "Solução Principal" no menu Eficiência & ROI para ver a simulação.</p>
+            </div>
+          ) : (
+            <div className="space-y-10">
+              {/* Seasonal Dashboard */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+                <div className="bg-slate-900 p-8 rounded-[40px] text-white shadow-2xl relative overflow-hidden group">
+                  <div className="absolute -top-4 -right-4 text-white/5 group-hover:scale-110 transition-transform duration-500"><TrendingUp size={120}/></div>
+                  <span className="text-[10px] uppercase font-black text-slate-500 tracking-[0.2em] block mb-4">Performance Sazonal</span>
+                  <div className="text-5xl font-black text-emerald-400 mb-2">{performance8760?.seasonalAvg.toFixed(2)}</div>
+                  <span className="text-sm font-bold text-slate-400">{performance8760?.label} Calculado (Real)</span>
+                </div>
+
+                <div className="bg-white p-8 rounded-[40px] border shadow-xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-black text-slate-400 tracking-[0.2em] block mb-4">Energia Térmica Produzida</span>
+                    <div className="text-4xl font-black text-slate-900">{performance8760?.totalThermal.toFixed(1)} <span className="text-lg">MWh</span></div>
+                  </div>
+                  <div className="mt-6 flex items-center gap-2 text-blue-600 font-bold text-xs">
+                    <CheckCircle2 size={16}/> Com base em {project.loadDefinitionMode}
+                  </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-[40px] border shadow-xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-black text-slate-400 tracking-[0.2em] block mb-4">Consumo Elétrico Estimado</span>
+                    <div className="text-4xl font-black text-slate-900">{performance8760?.totalElec.toFixed(1)} <span className="text-lg">MWh</span></div>
+                  </div>
+                  <div className="mt-6 flex items-center gap-2 text-indigo-600 font-bold text-xs">
+                    <Activity size={16}/> Simulação 8760h horária
+                  </div>
+                </div>
+
+                <div className="bg-white p-8 rounded-[40px] border shadow-xl flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] uppercase font-black text-slate-400 tracking-[0.2em] block mb-4">Emissões CO2 Estimadas</span>
+                    <div className="text-4xl font-black text-slate-900">{(performance8760 ? performance8760.totalElec * 0.2 : 0).toFixed(1)} <span className="text-lg">tCO2</span></div>
+                  </div>
+                  <div className="mt-6 flex items-center gap-2 text-emerald-600 font-bold text-xs">
+                    <Globe size={16}/> Factor de Emissão PT 2024
+                  </div>
+                </div>
+              </div>
+
+              {/* Dynamic Chart */}
+              <div className="bg-white p-10 rounded-[50px] border shadow-2xl h-[600px] flex flex-col">
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-xl font-black flex items-center gap-3"><Zap size={22} className="text-blue-600" /> Evolução da Eficiência vs Temperatura Exterior</h3>
+                  <div className="flex gap-6">
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-600"></div><span className="text-[10px] font-black uppercase text-slate-400">EER/COP Real</span></div>
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-orange-400"></div><span className="text-[10px] font-black uppercase text-slate-400">Temp. Exterior</span></div>
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={performance8760?.hourly}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="hour" hide />
+                      <YAxis yAxisId="eff" stroke="#3b82f6" fontSize={11} fontStyle="bold" label={{ value: 'EER/COP', angle: -90, position: 'insideLeft', fontSize: 10 }} />
+                      <YAxis yAxisId="temp" orientation="right" stroke="#fb923c" fontSize={11} fontStyle="bold" unit="ºC" label={{ value: 'Ext Temp', angle: 90, position: 'insideRight', fontSize: 10 }} />
+                      <Tooltip contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 30px rgba(0,0,0,0.1)'}} />
+                      <Line yAxisId="eff" type="monotone" dataKey="eff" stroke="#2563eb" strokeWidth={2} dot={false} name="Eficiência (COP/EER)" />
+                      <Line yAxisId="temp" type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={1} dot={false} name="Temp. Exterior" />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Energy Distribution */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                <div className="bg-white p-10 rounded-[50px] border shadow-2xl h-[450px] flex flex-col">
+                  <h3 className="text-xl font-black mb-8 flex items-center gap-3"><Gauge size={22} className="text-indigo-500" /> Distribuição de Carga vs Eficiência</h3>
+                  <div className="flex-1">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ComposedChart data={performance8760?.hourly}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="hour" hide />
+                        <YAxis stroke="#94a3b8" fontSize={11} fontStyle="bold" />
+                        <Tooltip />
+                        <Area type="monotone" dataKey="load" fill="#bfdbfe" stroke="#3b82f6" name="Carga Térmica (kW)" />
+                        <Line type="monotone" dataKey="elec" stroke="#ef4444" strokeWidth={2} dot={false} name="Consumo Elétrico (kW)" />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 p-10 rounded-[50px] text-white shadow-2xl relative flex flex-col justify-center text-center space-y-8">
+                  <Sparkles className="absolute top-10 right-10 text-blue-500 opacity-20" size={60} />
+                  <h3 className="text-3xl font-black">Parecer da Simulação</h3>
+                  <div className="p-8 bg-white/5 rounded-[40px] text-lg leading-relaxed border border-white/10 italic text-slate-300">
+                    Com base no perfil climático de {project.selectedDistrict}, o equipamento seleccionado operará com uma eficiência média real de <span className="text-emerald-400 font-black">{performance8760?.seasonalAvg.toFixed(2)}</span>. 
+                    {performance8760 && performance8760.seasonalAvg < (mainEquipment.eseer * 0.8) 
+                      ? " Nota-se uma degradação significativa face ao ESEER nominal devido a condições extremas de temperatura exterior ou carga parcial sub-otimizada."
+                      : " Este valor demonstra uma excelente adaptação da tecnologia de compressão ao perfil de carga projectado."}
+                  </div>
+                  <div className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Resultados processados via Algoritmo K-Performance Engine</div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -748,58 +1295,32 @@ const App: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">Marca</label>
-                  <select value={brandFilter} onChange={e => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
                     <option value="All">Todas as Marcas</option>
                     {BRANDS.map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">Refrigerante</label>
-                  <select value={refrigerantFilter} onChange={e => setRefrigerantFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <select value={refrigerantFilter} onChange={(e) => setRefrigerantFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
                     <option value="All">Todos os Fluidos</option>
                     {Object.values(Refrigerant).map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">Compressor</label>
-                  <select value={compressorFilter} onChange={e => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <select value={compressorFilter} onChange={(e) => setCompressorFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
                     <option value="All">Todos os Compressores</option>
                     {Object.values(CompressorType).map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="space-y-2">
                   <label className="text-[10px] font-black uppercase text-slate-400">Condensação</label>
-                  <select value={condensationFilter} onChange={e => setCondensationFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
+                  <select value={condensationFilter} onChange={(e) => setCondensationFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
                     <option value="All">Todos os Tipos</option>
                     <option value={CondensationType.AIR}>Condensação a Ar</option>
                     <option value={CondensationType.WATER}>Condensação a Água</option>
                   </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-4 border-t border-slate-100">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400">Modo de Operação</label>
-                  <select value={modeFilter} onChange={e => setModeFilter(e.target.value)} className="w-full p-4 bg-slate-50 rounded-2xl font-bold">
-                    <option value="All">Todos (Cool & Heat)</option>
-                    <option value="Cooling">Só Frio (Cool)</option>
-                    <option value="Heating">Só Calor (Heat)</option>
-                    <option value="HeatPump">Bomba Calor (Reversível)</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400">Temp. Fluido Mínima (ºC)</label>
-                  <div className="relative">
-                    <ThermometerSnowflake className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-400" size={18} />
-                    <input type="number" value={minTempFilter} onChange={e => setMinTempFilter(e.target.value)} placeholder="Min ºC" className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-bold" />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black uppercase text-slate-400">Temp. Fluido Máxima (ºC)</label>
-                  <div className="relative">
-                    <Flame className="absolute left-4 top-1/2 -translate-y-1/2 text-red-400" size={18} />
-                    <input type="number" value={maxTempFilter} onChange={e => setMaxTempFilter(e.target.value)} placeholder="Max ºC" className="w-full pl-12 p-4 bg-slate-50 rounded-2xl font-bold" />
-                  </div>
                 </div>
               </div>
             </div>
@@ -812,8 +1333,6 @@ const App: React.FC = () => {
                   <th className="px-10 py-8">Equipamento / Marca</th>
                   <th className="px-10 py-8">Capacidade (kW)</th>
                   <th className="px-10 py-8">Eficiência (ESEER)</th>
-                  <th className="px-10 py-8">Nominal (EER / COP)</th>
-                  <th className="px-10 py-8">Limites de Operação</th>
                   <th className="px-10 py-8 text-right">Selecção</th>
                 </tr>
               </thead>
@@ -824,40 +1343,14 @@ const App: React.FC = () => {
                       <div>
                         <span className="font-black text-slate-900 text-lg block">{item.brand}</span>
                         <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">{item.model}</span>
-                        <div className="flex gap-2 mt-2">
-                          <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[9px] font-black rounded-md">{item.compressorType}</span>
-                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[9px] font-black rounded-md">{item.refrigerant}</span>
-                        </div>
                       </div>
                     </td>
                     <td className="px-10 py-8">
-                      <div className="space-y-1">
-                        <span className="text-xl font-black text-slate-900">{item.coolingCapacity.toFixed(1)} <span className="text-[10px] text-slate-400">(Cool)</span></span>
-                        {item.heatingCapacity > 0 && <span className="block text-[11px] font-bold text-red-500">+{item.heatingCapacity.toFixed(1)} kW (Heat)</span>}
-                      </div>
+                      <span className="text-xl font-black text-slate-900">{item.coolingCapacity.toFixed(1)} kW</span>
                     </td>
                     <td className="px-10 py-8"><span className="text-2xl font-black text-emerald-600">{item.eseer.toFixed(2)}</span></td>
-                    <td className="px-10 py-8">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-black text-slate-700">EER: {item.eer.toFixed(2)}</span>
-                        {item.heatingCapacity > 0 && <span className="text-sm font-black text-indigo-600">COP: {item.cop.toFixed(2)}</span>}
-                      </div>
-                    </td>
-                    <td className="px-10 py-8">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-[11px] font-black text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 w-fit">
-                          <Sun size={14}/> {item.minAmbientTemp}ºC a {item.maxAmbientTemp}ºC (Amb)
-                        </div>
-                        <div className="flex items-center gap-2 text-[11px] font-black text-blue-700 bg-blue-50 px-3 py-1.5 rounded-xl border border-blue-100 w-fit">
-                          <Droplets size={14}/> {item.minFluidTemp}ºC a {item.maxFluidTemp}ºC (Fluid)
-                        </div>
-                      </div>
-                    </td>
                     <td className="px-10 py-8 text-right">
-                       <div className="flex justify-end gap-3">
-                         <button onClick={() => setViewingEquipmentId(item.id)} className="p-4 bg-white border border-slate-100 text-slate-400 hover:text-blue-600 hover:shadow-lg rounded-2xl transition-all active:scale-90 shadow-sm"><Eye size={24} /></button>
-                         <button onClick={() => toggleEquipmentSelection(item.id)} className={`px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white shadow-red-200' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white shadow-slate-200'}`}>{project.selectedEquipmentIds.includes(item.id) ? 'Remover' : 'Seleccionar'}</button>
-                       </div>
+                       <button onClick={() => toggleEquipmentSelection(item.id)} className={`px-8 py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg active:scale-95 ${project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white shadow-red-200' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white'}`}>{project.selectedEquipmentIds.includes(item.id) ? 'Remover' : 'Seleccionar'}</button>
                     </td>
                   </tr>
                 ))}
@@ -958,186 +1451,89 @@ const App: React.FC = () => {
       )}
 
       {activeTab === 'selectionSheet' && (
-        <div className="space-y-16 animate-in slide-in-from-bottom-6 pb-32">
-          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 no-print">
+        <div className="space-y-10 animate-in slide-in-from-bottom-6 pb-20">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8 no-print">
             <div>
-              <h2 className="text-5xl font-black text-slate-900 tracking-tight">Folha de Seleção</h2>
-              <p className="text-slate-500 text-lg mt-2">Documentação técnica para incorporação em projectos de execução.</p>
+              <h2 className="text-4xl font-black text-slate-900 tracking-tight">Folha de Seleção Profissional</h2>
+              <p className="text-slate-500 mt-2">Documentação técnica certificada em formato A4 para projecto.</p>
             </div>
-            <div className="flex flex-wrap gap-4">
-              {mainEquipment && (
-                <>
-                  <button onClick={handleCopyToClipboard} className={`px-8 py-4 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl active:scale-95 transition-all ${copySuccess ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-100'}`}>
-                    {copySuccess ? <Check size={20}/> : <Copy size={20}/>} {copySuccess ? 'Copiado!' : 'Copiar para Word'}
-                  </button>
-                  <button onClick={handleExportHTML} className="px-8 py-4 bg-white text-slate-700 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-slate-50 border-2 border-slate-100 active:scale-95">
-                    <FileCode size={20}/> HTML
-                  </button>
-                  <button onClick={handleExportDOC} className="px-8 py-4 bg-white text-slate-700 rounded-[25px] text-[11px] font-black uppercase tracking-widest flex items-center gap-2 shadow-xl hover:bg-slate-50 border-2 border-slate-100 active:scale-95">
-                    <FileOutput size={20}/> Word (DOC)
-                  </button>
-                  <button onClick={() => window.print()} className="px-10 py-5 bg-slate-900 text-white rounded-[25px] font-black uppercase tracking-widest flex items-center gap-4 shadow-2xl hover:bg-slate-800 transition active:scale-95">
-                    <Printer size={24}/> Imprimir A4
-                  </button>
-                </>
-              )}
-            </div>
+            {mainEquipment && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleCopyToClipboard} className={`px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all ${copySuccess ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'}`}>
+                  {copySuccess ? <Check size={16}/> : <Copy size={16}/>} {copySuccess ? 'Copiado' : 'Copiar'}
+                </button>
+                <button onClick={handleExportHTML} className="px-5 py-3 bg-white text-slate-700 rounded-2xl text-[10px] font-black uppercase border border-slate-200 hover:bg-slate-50 flex items-center gap-2">
+                  <FileCode size={16}/> HTML
+                </button>
+                <button onClick={handleExportDOC} className="px-5 py-3 bg-white text-slate-700 rounded-2xl text-[10px] font-black uppercase border border-slate-200 hover:bg-slate-50 flex items-center gap-2">
+                  <FileOutput size={16}/> Word
+                </button>
+                <button onClick={() => window.print()} className="px-8 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-lg hover:bg-blue-700 transition">
+                  <File size={16}/> Exportar PDF / Imprimir
+                </button>
+              </div>
+            )}
           </header>
 
           {!mainEquipment ? (
-            <div className="p-32 bg-slate-100/50 border-4 border-dashed border-slate-200 rounded-[60px] text-center w-full max-w-5xl mx-auto space-y-6">
+            <div className="p-32 bg-slate-100/50 border-4 border-dashed border-slate-200 rounded-[60px] text-center w-full max-w-5xl mx-auto space-y-6 no-print">
               <ClipboardList className="mx-auto text-slate-200" size={100} />
               <p className="text-slate-400 font-medium italic">Defina uma "Solução Principal" na aba Análise para visualizar a folha de dados.</p>
             </div>
           ) : (
-            <div className="w-[210mm] min-h-[297mm] bg-white shadow-2xl mx-auto p-16 text-[#2a3f5f] font-sans text-[11px] border border-slate-200 selection-sheet-printable" ref={selectionSheetRef}>
-              <div className="flex justify-between items-start mb-12 border-b-4 border-blue-900 pb-8">
-                <div>
-                  <h1 className="text-5xl font-black text-blue-900 tracking-tighter">{mainEquipment.brand}</h1>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] mt-2">Koelho2000 Pro Selection Suite</p>
-                </div>
-                <div className="text-right space-y-3">
-                  <div className="text-2xl font-black uppercase text-blue-900">Folha de Selecção</div>
-                  <div className="grid grid-cols-2 gap-x-6 text-[10px] font-bold text-slate-500">
-                    <span className="text-right uppercase opacity-60">Ref:</span><span className="text-slate-900 text-left font-black">{project.workReference}</span>
-                    <span className="text-right uppercase opacity-60">Projecto:</span><span className="text-slate-900 text-left">{project.projectName}</span>
-                    <span className="text-right uppercase opacity-60">Instalação:</span><span className="text-slate-900 text-left">{project.installationName} ({project.location})</span>
-                    <span className="text-right uppercase opacity-60">Cliente:</span><span className="text-slate-900 text-left">{project.clientName}</span>
-                    <span className="text-right uppercase opacity-60">Auditores:</span><span className="text-slate-900 text-left">{project.auditCompany}</span>
-                    <span className="text-right uppercase opacity-60">Engenheiro:</span><span className="text-slate-900 text-left">{project.technicianName}</span>
-                    <span className="text-right uppercase opacity-60">Data:</span><span className="text-slate-900 text-left">{new Date().toLocaleDateString('pt-PT')}</span>
+            <div className="flex justify-center bg-slate-200 py-12 px-4 no-print overflow-hidden rounded-[40px]">
+              <div 
+                className="w-[210mm] min-h-[297mm] h-[297mm] bg-white shadow-[0_40px_100px_rgba(0,0,0,0.1)] p-[15mm] text-[#2a3f5f] font-sans text-[11px] flex flex-col selection-sheet-printable overflow-hidden" 
+                ref={selectionSheetRef}
+              >
+                <div className="flex justify-between items-start mb-8 border-b-4 border-blue-900 pb-6">
+                  <div className="flex-1">
+                    <h1 className="text-4xl font-black text-blue-900 tracking-tighter leading-none">{mainEquipment.brand}</h1>
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-[0.25em] mt-1 italic">Koelho2000 Pro Selection Suite</p>
                   </div>
-                </div>
-              </div>
-
-              <div className="mb-12">
-                <h2 className="text-4xl font-black text-blue-900 mb-2">{mainEquipment.model}</h2>
-                <p className="text-blue-500 font-black text-xl uppercase tracking-widest">{mainEquipment.compressorType}-cooled Industrial Solution</p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-16">
-                <section className="space-y-6">
-                  <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Informação de Performance</h3>
-                  <table className="w-full border-separate border-spacing-y-1">
-                    <tbody>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Arrefecimento (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900 text-lg">{mainEquipment.coolingCapacity.toFixed(1)}</td></tr>
-                      {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Capacidade Aquecimento (kW)</td><td className="px-4 py-3 text-right font-black text-red-600 text-lg">{mainEquipment.heatingCapacity.toFixed(1)}</td></tr>}
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Nominal (EER)</td><td className="px-4 py-3 text-right font-black text-blue-700 text-lg">{mainEquipment.eer.toFixed(2)}</td></tr>
-                      {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Aquecimento (COP)</td><td className="px-4 py-3 text-right font-black text-indigo-700 text-lg">{mainEquipment.cop.toFixed(2)}</td></tr>}
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Eficiência Sazonal (ESEER)</td><td className="px-4 py-3 text-right font-black text-emerald-600 text-lg">{mainEquipment.eseer.toFixed(2)}</td></tr>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Consumo Elétrico Nominal (kW)</td><td className="px-4 py-3 text-right font-black text-slate-900">{(mainEquipment.coolingCapacity / mainEquipment.eer).toFixed(1)}</td></tr>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Fluido Refrigerante</td><td className="px-4 py-3 text-right font-black text-blue-900">{mainEquipment.refrigerant}</td></tr>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Peso Unidade (kg)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.weight.toLocaleString()}</td></tr>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Dimensões (LxPxH mm)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.dimensions}</td></tr>
-                      <tr className="bg-slate-50"><td className="px-4 py-3 font-bold text-slate-500">Nível Sonoro dB(A)</td><td className="px-4 py-3 text-right font-black text-slate-900">{mainEquipment.noiseLevel}.0</td></tr>
-                    </tbody>
-                  </table>
-                </section>
-                
-                <section className="space-y-6">
-                  <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Condições de Operação</h3>
-                  <div className="bg-slate-50 p-6 rounded-2xl space-y-6 border border-slate-100">
-                    <div className="space-y-3">
-                      <span className="font-black text-[10px] uppercase text-blue-800 tracking-widest block border-b pb-2 border-blue-100">Evaporador / Circuito Primário</span>
-                      <div className="grid grid-cols-2 gap-y-2 text-[11px]">
-                        <span className="text-slate-500">Temp. Entrada Fluid:</span><span className="font-black text-right">{project.targetTemperature + 5}.0 ºC</span>
-                        <span className="text-slate-500">Temp. Saída Fluid:</span><span className="font-black text-right">{project.targetTemperature}.0 ºC</span>
-                        <span className="text-slate-500">Caudal Fluid:</span><span className="font-black text-right">{(mainEquipment.coolingCapacity/4.186/5).toFixed(2)} l/s</span>
-                        <span className="text-slate-500">Tipo Fluid:</span><span className="font-black text-right">Água Fresca</span>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-3 pt-4">
-                      {mainEquipment.condensationType === CondensationType.WATER ? (
-                        <>
-                          <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condensador / Circuito Secundário (Água)</span>
-                          <div className="grid grid-cols-2 gap-y-2 text-[11px]">
-                            <span className="text-slate-500">Temp. Entrada Água:</span><span className="font-black text-right">30.0 ºC</span>
-                            <span className="text-slate-500">Temp. Saída Água:</span><span className="font-black text-right">35.0 ºC</span>
-                            <span className="text-slate-500">Caudal Água:</span><span className="font-black text-right">{((mainEquipment.coolingCapacity * (1 + 1/mainEquipment.eer))/4.186/5).toFixed(2)} l/s</span>
-                            <span className="text-slate-500">Tipo Fluid:</span><span className="font-black text-right">Água de Torre / Geotermia</span>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <span className="font-black text-[10px] uppercase text-indigo-800 tracking-widest block border-b pb-2 border-indigo-100">Condições de Ar Exterior</span>
-                          <div className="grid grid-cols-2 gap-y-2 text-[11px]">
-                            <span className="text-slate-500">Limites Ambiente:</span><span className="font-black text-right">{mainEquipment.minAmbientTemp}ºC a {mainEquipment.maxAmbientTemp}ºC</span>
-                            <span className="text-slate-500">Tipo de Condensação:</span><span className="font-black text-right">{mainEquipment.condensationType} (Ar)</span>
-                          </div>
-                        </>
-                      )}
+                  <div className="text-right flex-1">
+                    <div className="text-xl font-black uppercase text-blue-900 mb-2">Folha de Selecção</div>
+                    <div className="grid grid-cols-[auto,1fr] gap-x-3 text-[9px] font-bold text-slate-500 leading-tight">
+                      <span className="text-right uppercase opacity-40">Ref:</span><span className="text-slate-900 text-left font-black">{project.workReference}</span>
+                      <span className="text-right uppercase opacity-40">Proj:</span><span className="text-slate-900 text-left truncate">{project.projectName}</span>
+                      <span className="text-right uppercase opacity-40">Loc:</span><span className="text-slate-900 text-left truncate">{project.installationName} ({project.location})</span>
+                      <span className="text-right uppercase opacity-40">Eng:</span><span className="text-slate-900 text-left">{project.technicianName}</span>
+                      <span className="text-right uppercase opacity-40">Data:</span><span className="text-slate-900 text-left">{new Date().toLocaleDateString('pt-PT')}</span>
                     </div>
                   </div>
-                  
-                  <div className="p-6 bg-slate-900 text-white rounded-2xl flex justify-between items-center shadow-lg">
-                    <div className="flex items-center gap-3">
-                       <Calculator className="text-blue-400" size={20} />
-                       <span className="text-[10px] uppercase font-black tracking-widest">Valor do Investimento</span>
-                    </div>
-                    <span className="text-2xl font-black">{mainEquipment.price.toLocaleString('pt-PT')} €</span>
-                  </div>
+                </div>
 
-                  <div className="bg-blue-50 border border-blue-100 p-6 rounded-2xl flex items-center gap-4">
-                     <Award className="text-blue-900" size={32} />
-                     <div className="text-[9px] font-black uppercase tracking-tighter text-blue-900 leading-tight">
-                       José Coelho • PQ00851 • OET 2321<br/>Certificação AQUA+ AQ0222
-                     </div>
-                  </div>
-                </section>
-              </div>
+                <div className="mb-6">
+                  <h2 className="text-3xl font-black text-blue-900 mb-0.5 leading-none">{mainEquipment.model}</h2>
+                  <p className="text-blue-500 font-black text-xs uppercase tracking-[0.2em]">{mainEquipment.compressorType}-cooled Industrial Performance</p>
+                </div>
 
-              <div className="mt-12 space-y-6">
-                <h3 className="bg-[#1e3a8a] text-white px-5 py-3 font-black uppercase tracking-widest rounded-xl text-xs">Curva de Eficiência vs Carga Partilhada</h3>
-                <div className="grid grid-cols-3 gap-8 items-center bg-slate-50 p-8 rounded-3xl border border-slate-100">
-                  <div className="col-span-2 h-48">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={mainEquipment.efficiencyCurve}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                        <XAxis 
-                          dataKey="x" 
-                          stroke="#64748b" 
-                          fontSize={10} 
-                          fontStyle="bold" 
-                          label={{ value: 'Carga (%)', position: 'insideBottom', offset: -5, fontSize: 10, fontWeight: 'bold' }} 
-                        />
-                        <YAxis 
-                          stroke="#64748b" 
-                          fontSize={10} 
-                          fontStyle="bold" 
-                          label={{ value: 'Eficiência Rel.', angle: -90, position: 'insideLeft', fontSize: 10, fontWeight: 'bold' }} 
-                        />
-                        <Line type="monotone" dataKey="y" stroke="#1e3a8a" strokeWidth={3} dot={{ r: 4, fill: '#1e3a8a' }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="col-span-1">
-                    <table className="w-full text-[10px] border-collapse">
-                      <thead>
-                        <tr className="border-b-2 border-slate-200">
-                          <th className="text-left py-2 uppercase opacity-60">Carga (%)</th>
-                          <th className="text-right py-2 uppercase opacity-60">Eficiência Rel.</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {mainEquipment.efficiencyCurve.map((p, idx) => (
-                          <tr key={idx} className="border-b border-slate-100">
-                            <td className="py-2 font-bold">{p.x}%</td>
-                            <td className="py-2 text-right font-black text-blue-900">{p.y.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                <div className="grid grid-cols-2 gap-8 flex-1 content-start">
+                  <div className="space-y-6">
+                    <section className="space-y-4">
+                      <h3 className="bg-[#1e3a8a] text-white px-3 py-1.5 font-black uppercase tracking-widest rounded-lg text-[9px]">Especificações de Performance</h3>
+                      <table className="w-full border-separate border-spacing-y-0.5">
+                        <tbody className="text-[10px]">
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Capacidade Arrefecimento (kW)</td><td className="px-3 py-2 text-right font-black text-slate-900">{mainEquipment.coolingCapacity.toFixed(1)}</td></tr>
+                          {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Capacidade Aquecimento (kW)</td><td className="px-3 py-2 text-right font-black text-red-600">{mainEquipment.heatingCapacity.toFixed(1)}</td></tr>}
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Eficiência Nominal (EER)</td><td className="px-3 py-2 text-right font-black text-blue-700">{mainEquipment.eer.toFixed(2)}</td></tr>
+                          {mainEquipment.heatingCapacity > 0 && <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Eficiência Aquecimento (COP)</td><td className="px-3 py-2 text-right font-black text-indigo-700">{mainEquipment.cop.toFixed(2)}</td></tr>}
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Eficiência Sazonal (ESEER)</td><td className="px-3 py-2 text-right font-black text-emerald-600">{mainEquipment.eseer.toFixed(2)}</td></tr>
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Fluido Refrigerante</td><td className="px-3 py-2 text-right font-black text-blue-900">{mainEquipment.refrigerant}</td></tr>
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Peso Operacional (kg)</td><td className="px-3 py-2 text-right font-black text-slate-900">{mainEquipment.weight.toLocaleString()}</td></tr>
+                          <tr className="bg-slate-50"><td className="px-3 py-2 font-bold text-slate-500">Dimensões (LxPxH mm)</td><td className="px-3 py-2 text-right font-black text-slate-900">{mainEquipment.dimensions}</td></tr>
+                        </tbody>
+                      </table>
+                    </section>
                   </div>
                 </div>
-              </div>
 
-              <div className="mt-24 pt-8 border-t-2 border-slate-100 text-[9px] text-slate-400 font-bold uppercase tracking-[0.4em] flex justify-between items-center">
-                <div className="space-y-1">
-                  <div>Koelho2000 Engenharia • NIF PT513183647</div>
-                  <div className="opacity-60 lowercase">www.koelho2000.com • koelho2000@gmail.com</div>
+                <div className="mt-auto pt-4 border-t-2 border-slate-100 flex justify-between items-end">
+                  <div className="text-left text-[8px] text-slate-400 font-bold uppercase tracking-[0.2em] leading-tight">
+                    NIF: PT513183647 • Koelho2000 Engenharia<br/>
+                    Sintra, PT • koelho2000@gmail.com
+                  </div>
                 </div>
-                <span>Folha de Dados Certificada</span>
               </div>
             </div>
           )}
@@ -1146,26 +1542,35 @@ const App: React.FC = () => {
 
       {activeTab === 'report' && (
         <div className="space-y-16 animate-in slide-in-from-bottom-6 pb-32">
-          <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-8 no-print">
+          <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-8 no-print">
             <div>
               <h2 className="text-5xl font-black text-slate-900 tracking-tight">Relatório Técnico IA</h2>
               <p className="text-slate-500 text-lg mt-2">Documentação profissional gerada sob os padrões da Koelho2000.</p>
             </div>
-            <div className="flex gap-4">
-               {generatedReport && (
-                 <button onClick={() => window.print()} className="p-6 bg-slate-900 text-white rounded-[30px] shadow-2xl hover:bg-slate-800 transition active:scale-95">
-                   <Printer size={32}/>
-                 </button>
-               )}
+            {generatedReport && !isGeneratingReport && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleReportCopyToClipboard} className={`px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-sm transition-all ${reportCopySuccess ? 'bg-emerald-500 text-white' : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-200'}`}>
+                  {reportCopySuccess ? <Check size={16}/> : <Copy size={16}/>} {reportCopySuccess ? 'Copiado' : 'Copiar'}
+                </button>
+                <button onClick={() => window.print()} className="px-8 py-3 bg-blue-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center gap-3 shadow-lg hover:bg-blue-700 transition">
+                  <File size={16}/> PDF
+                </button>
+              </div>
+            )}
+            {!generatedReport && !isGeneratingReport && (
                <button 
                 onClick={handleGenerateReport} 
-                disabled={isGeneratingReport || selectedUnits.length === 0} 
+                disabled={selectedUnits.length === 0} 
                 className="px-12 py-6 bg-blue-600 text-white rounded-[35px] font-black uppercase tracking-widest flex items-center gap-4 hover:bg-blue-700 transition shadow-2xl shadow-blue-600/30 disabled:opacity-50 active:scale-95"
                >
-                 {isGeneratingReport ? <RefreshCw className="animate-spin" size={28} /> : <Sparkles size={28} />} 
-                 {isGeneratingReport ? 'Processando...' : (generatedReport ? 'Regerar Relatório' : 'Gerar Relatório A4')}
+                 <Sparkles size={28} /> Gerar Relatório A4
                </button>
-            </div>
+            )}
+            {isGeneratingReport && (
+              <div className="flex items-center gap-4 text-blue-600 font-black uppercase tracking-widest animate-pulse">
+                <RefreshCw className="animate-spin" size={24} /> Processando IA...
+              </div>
+            )}
           </header>
 
           <div className="flex flex-col items-center">
@@ -1173,22 +1578,15 @@ const App: React.FC = () => {
               <div className="flex flex-col items-center gap-10 py-32 text-center no-print">
                 <div className="relative">
                   <div className="w-32 h-32 border-[12px] border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-                  <Sparkles className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-600 animate-pulse" size={48} />
+                  <Sparkles className="absolute top-10/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-600 animate-pulse" size={48} />
                 </div>
                 <p className="text-3xl font-black text-slate-900">Compilando Relatório Profissional...</p>
               </div>
             )}
 
             {!isGeneratingReport && reportPages.length > 0 && (
-              <div ref={reportRef} className="print:block space-y-0">
+              <div ref={reportRef} className="print:block space-y-0 w-full flex flex-col items-center">
                 {reportPages.map((page, idx) => renderReportPage(page, idx))}
-              </div>
-            )}
-
-            {!isGeneratingReport && reportPages.length === 0 && (
-              <div className="bg-slate-100/50 border-4 border-dashed border-slate-200 p-32 rounded-[60px] text-center w-full max-w-5xl no-print">
-                <FileText className="mx-auto mb-10 text-slate-200" size={100} />
-                <h4 className="text-3xl font-black text-slate-400 mb-4 uppercase tracking-widest">Aguardando Selecção</h4>
               </div>
             )}
           </div>

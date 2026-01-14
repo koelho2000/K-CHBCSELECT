@@ -12,7 +12,9 @@ import {
   FolderOpen,
   FilePlus,
   ExternalLink,
-  ClipboardList
+  ClipboardList,
+  CloudSun,
+  Zap
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -28,9 +30,11 @@ const Layout: React.FC<LayoutProps> = ({ children, activeTab, setActiveTab, onNe
   const tabs = [
     { id: 'home', label: 'Início', icon: Home },
     { id: 'config', label: 'Projecto', icon: Settings },
+    { id: 'climate', label: 'Ficheiro Climático', icon: CloudSun },
     { id: 'loads', label: 'Cargas Térmicas', icon: Activity },
     { id: 'selection', label: 'Seleção OEM', icon: Database },
     { id: 'analysis', label: 'Eficiência & ROI', icon: BarChart2 },
+    { id: 'performance', label: 'Performance 8760h', icon: Zap },
     { id: 'selectionSheet', label: 'Folha de Dados', icon: ClipboardList },
     { id: 'report', label: 'Relatório IA', icon: FileText },
   ];

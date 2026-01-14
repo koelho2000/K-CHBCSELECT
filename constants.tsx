@@ -4,14 +4,58 @@ import { OEMEquipment, Refrigerant, CompressorType, CondensationType, EquipmentT
 // Exported brands to be used in filtering and UI
 export const BRANDS = ['Carrier', 'Daikin', 'Mitsubishi', 'Trane', 'AERMEC', 'Systemair'];
 
+export const PT_DISTRICTS_CLIMATE: Record<string, { minT: number, maxT: number, avgRH: number }> = {
+  'Lisboa': { minT: 8, maxT: 32, avgRH: 65 },
+  'Porto': { minT: 5, maxT: 28, avgRH: 75 },
+  'Faro': { minT: 10, maxT: 35, avgRH: 60 },
+  'Beja': { minT: 4, maxT: 42, avgRH: 50 },
+  'Évora': { minT: 3, maxT: 40, avgRH: 55 },
+  'Setúbal': { minT: 8, maxT: 34, avgRH: 68 },
+  'Santarém': { minT: 5, maxT: 38, avgRH: 60 },
+  'Leiria': { minT: 6, maxT: 30, avgRH: 72 },
+  'Coimbra': { minT: 5, maxT: 33, avgRH: 70 },
+  'Castelo Branco': { minT: 2, maxT: 39, avgRH: 55 },
+  'Portalegre': { minT: 3, maxT: 38, avgRH: 58 },
+  'Guarda': { minT: -2, maxT: 31, avgRH: 65 },
+  'Viseu': { minT: 1, maxT: 32, avgRH: 68 },
+  'Aveiro': { minT: 7, maxT: 28, avgRH: 78 },
+  'Braga': { minT: 4, maxT: 32, avgRH: 70 },
+  'Viana do Castelo': { minT: 6, maxT: 27, avgRH: 75 },
+  'Vila Real': { minT: 1, maxT: 34, avgRH: 62 },
+  'Bragança': { minT: -1, maxT: 35, avgRH: 58 },
+  'Funchal': { minT: 13, maxT: 26, avgRH: 65 },
+  'Ponta Delgada': { minT: 11, maxT: 25, avgRH: 80 }
+};
+
 const generateMockData = (): OEMEquipment[] => {
   const data: OEMEquipment[] = [];
   
   BRANDS.forEach(brand => {
-    // 1. STANDARD CHILLERS (Mostly Air-Cooled)
+    // Helper to estimate installation data
+    const getInstallData = (cap: number, eer: number, dims: string) => {
+      const absorbedPower = cap / (eer || 3);
+      const amp = Math.round(absorbedPower * 1.7); // 400V estimate
+      const cb = amp < 32 ? "32A" : amp < 63 ? "63A" : amp < 100 ? "100A" : amp < 160 ? "160A" : amp < 250 ? "250A" : amp < 400 ? "400A" : "630A";
+      const section = amp < 25 ? 4 : amp < 35 ? 6 : amp < 50 ? 10 : amp < 70 ? 16 : amp < 95 ? 25 : amp < 125 ? 35 : amp < 160 ? 50 : amp < 200 ? 70 : 95;
+      const dn = cap < 100 ? 50 : cap < 250 ? 80 : cap < 500 ? 100 : cap < 800 ? 125 : 150;
+      const [l, p, h] = dims.split('x').map(Number);
+      return {
+        amperage: amp,
+        voltage: "400V / 3Ph / 50Hz",
+        cableSection: section,
+        circuitBreaker: cb,
+        pipeDN: dn,
+        baseDimensions: `${l + 400}x${p + 400}x300`,
+        refrigerantCharge: Math.round(cap * 0.15)
+      };
+    };
+
+    // 1. STANDARD CHILLERS
     for (let i = 1; i <= 5; i++) {
       const coolingCap = 200 + Math.random() * 900;
       const condensationType = Math.random() > 0.3 ? CondensationType.AIR : CondensationType.WATER;
+      const dims = "4200x2250x2500";
+      const eer = 3.1 + Math.random() * 0.8;
       
       let refrigerant = Refrigerant.R134a;
       let compressor = CompressorType.SCREW;
@@ -28,12 +72,12 @@ const generateMockData = (): OEMEquipment[] => {
         condensationType,
         coolingCapacity: coolingCap,
         heatingCapacity: 0,
-        eer: 3.1 + Math.random() * 0.8,
+        eer,
         cop: 0,
         eseer: 4.8 + Math.random() * 1.5,
         refrigerant,
         compressorType: compressor,
-        dimensions: "4200x2250x2500",
+        dimensions: dims,
         weight: 5200,
         noiseLevel: 67,
         price: Math.round(45000 + coolingCap * 175),
@@ -43,12 +87,12 @@ const generateMockData = (): OEMEquipment[] => {
         maxAmbientTemp: 50,
         efficiencyCurve: [
           { x: 25, y: 0.72 }, { x: 50, y: 0.90 }, { x: 75, y: 1.0 }, { x: 100, y: 0.85 }
-        ]
+        ],
+        ...getInstallData(coolingCap, eer, dims)
       });
     }
 
-    // 2. AIR-COOLED HEAT PUMPS (Air-to-Water Reversible)
-    // Expanded set specifically for Air-Cooled as requested
+    // 2. AIR-COOLED HEAT PUMPS
     const airHPSeries = [
       { cap: 60, refr: Refrigerant.R32, comp: CompressorType.SCROLL, tag: 'Compact' },
       { cap: 130, refr: Refrigerant.R32, comp: CompressorType.SCROLL, tag: 'Mid' },
@@ -59,9 +103,10 @@ const generateMockData = (): OEMEquipment[] => {
 
     airHPSeries.forEach((sol, idx) => {
       const cap = sol.cap * (0.9 + Math.random() * 0.2);
+      const dims = "3200x1150x2300";
+      const eer = 2.9 + Math.random() * 0.6;
       let model = "";
       
-      // Brand-specific real-world series mapping
       if (brand === 'Carrier') model = sol.cap > 400 ? `30XQ-${Math.round(cap)}` : `30RQ-${Math.round(cap)}`;
       else if (brand === 'Daikin') model = `EWYT-${Math.round(cap)}-B-XL`;
       else if (brand === 'Mitsubishi') model = `MEHP-iS-G07-${Math.round(cap)}`;
@@ -76,26 +121,27 @@ const generateMockData = (): OEMEquipment[] => {
         condensationType: CondensationType.AIR,
         coolingCapacity: cap * 0.92, 
         heatingCapacity: cap,
-        eer: 2.9 + Math.random() * 0.6,
+        eer,
         cop: 3.3 + Math.random() * 0.7,
         eseer: 4.1 + Math.random() * 1.2,
         refrigerant: sol.refr,
         compressorType: sol.comp,
-        dimensions: "3200x1150x2300",
+        dimensions: dims,
         weight: 1200 + cap * 4,
         noiseLevel: 70,
         price: Math.round(30000 + cap * 310),
         minFluidTemp: -12,
-        maxFluidTemp: 60, // Modern air-cooled max temp
-        minAmbientTemp: -22, // Enhanced low ambient
+        maxFluidTemp: 60,
+        minAmbientTemp: -22,
         maxAmbientTemp: 48,
         efficiencyCurve: [
           { x: 25, y: 0.84 }, { x: 50, y: 0.97 }, { x: 75, y: 1.0 }, { x: 100, y: 0.91 }
-        ]
+        ],
+        ...getInstallData(cap * 0.92, eer, dims)
       });
     });
 
-    // 3. SPECIALIZED AIR-COOLED MULTIPURPOSE (4-Pipe Simultaneous Units)
+    // 3. SPECIALIZED AIR-COOLED MULTIPURPOSE
     const multiPurpose = [
       { cap: 200, refr: Refrigerant.R410A, comp: CompressorType.SCROLL },
       { cap: 450, refr: Refrigerant.R134a, comp: CompressorType.SCREW }
@@ -103,6 +149,8 @@ const generateMockData = (): OEMEquipment[] => {
 
     multiPurpose.forEach((sol, idx) => {
       const cap = sol.cap + (Math.random() * 50);
+      const dims = "4500x2200x2500";
+      const eer = 3.0;
       data.push({
         id: `${brand.toLowerCase()}-air-multi-${idx}`,
         brand,
@@ -110,12 +158,12 @@ const generateMockData = (): OEMEquipment[] => {
         condensationType: CondensationType.AIR,
         coolingCapacity: cap,
         heatingCapacity: cap * 1.1,
-        eer: 3.0,
+        eer,
         cop: 3.5,
         eseer: 4.5,
         refrigerant: sol.refr,
         compressorType: sol.comp,
-        dimensions: "4500x2200x2500",
+        dimensions: dims,
         weight: 3500 + cap * 2,
         noiseLevel: 72,
         price: Math.round(60000 + cap * 350),
@@ -125,7 +173,8 @@ const generateMockData = (): OEMEquipment[] => {
         maxAmbientTemp: 45,
         efficiencyCurve: [
           { x: 25, y: 0.70 }, { x: 50, y: 0.88 }, { x: 75, y: 1.0 }, { x: 100, y: 0.95 }
-        ]
+        ],
+        ...getInstallData(cap, eer, dims)
       });
     });
 
@@ -137,6 +186,8 @@ const generateMockData = (): OEMEquipment[] => {
 
     waterCooledHPSolutions.forEach((sol, idx) => {
       const cap = sol.cap + (Math.random() * 100);
+      const dims = "2000x1000x1700";
+      const eer = 4.8 + Math.random();
       data.push({
         id: `${brand.toLowerCase()}-w2w-hp-std-${idx}`,
         brand,
@@ -144,12 +195,12 @@ const generateMockData = (): OEMEquipment[] => {
         condensationType: CondensationType.WATER,
         coolingCapacity: cap * 0.85, 
         heatingCapacity: cap,
-        eer: 4.8 + Math.random(), 
+        eer, 
         cop: 5.1 + Math.random(), 
         eseer: 6.2 + Math.random() * 2,
         refrigerant: sol.refr,
         compressorType: sol.comp,
-        dimensions: "2000x1000x1700",
+        dimensions: dims,
         weight: 1500 + cap * 2,
         noiseLevel: 55,
         price: Math.round(38000 + cap * 240),
@@ -159,7 +210,8 @@ const generateMockData = (): OEMEquipment[] => {
         maxAmbientTemp: 45,
         efficiencyCurve: [
           { x: 25, y: 0.76 }, { x: 50, y: 0.92 }, { x: 75, y: 1.0 }, { x: 100, y: 0.94 }
-        ]
+        ],
+        ...getInstallData(cap * 0.85, eer, dims)
       });
     });
   });
