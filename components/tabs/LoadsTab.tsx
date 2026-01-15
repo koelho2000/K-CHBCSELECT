@@ -1,7 +1,25 @@
 
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-// Added RefreshCw to the list of imported icons from lucide-react
-import { Settings, FileDown, FileUp, Zap, LayoutGrid, Clock, Activity, BarChart3, TrendingUp, CalendarDays, CheckCircle2, Info, Lightbulb, ShieldCheck, ThermometerSnowflake, AlertTriangle, RefreshCw } from 'lucide-react';
+import { 
+  Settings, 
+  FileDown, 
+  FileUp, 
+  Zap, 
+  LayoutGrid, 
+  Clock, 
+  Activity, 
+  BarChart3, 
+  TrendingUp, 
+  CalendarDays, 
+  CheckCircle2, 
+  Info, 
+  Lightbulb, 
+  ShieldCheck, 
+  ThermometerSnowflake, 
+  AlertTriangle, 
+  RefreshCw,
+  Globe2 
+} from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid, Legend, BarChart, Bar, Cell } from 'recharts';
 import { ProjectData } from '../../types';
 import { STANDARD_PROFILES } from '../../constants';
@@ -153,7 +171,7 @@ const LoadsTab: React.FC<Props> = ({ project, setProject }) => {
           selectedProfileName: 'Importado via CSV (8760h)'
         }));
         setActiveProfileIdx(null);
-        setNeedsSimulation(false); // Já importamos os dados finais
+        setNeedsSimulation(false); 
         alert("Carga 8760h importada com sucesso! Potência de pico e gráficos atualizados.");
       } else {
         alert(`Ficheiro CSV inválido. Encontradas apenas ${newLoads.length} entradas (necessárias 8760).`);
@@ -178,9 +196,18 @@ const LoadsTab: React.FC<Props> = ({ project, setProject }) => {
           <button onClick={() => fileInputRef.current?.click()} className="px-6 py-4 bg-white border-2 border-indigo-100 text-indigo-700 rounded-2xl text-xs font-black uppercase flex items-center gap-2 hover:bg-indigo-50 transition shadow-sm active:scale-95">
             <FileUp size={18}/> Importar CSV 8760h
           </button>
-          <button onClick={handleExportCSV} className="px-6 py-4 bg-white border-2 border-emerald-100 text-emerald-700 rounded-2xl text-xs font-black uppercase flex items-center gap-2 hover:bg-emerald-50 transition shadow-sm">
+          
+          <button 
+            onClick={() => window.open('https://k-kwchartcreate-50850505662.us-west1.run.app/', '_blank')} 
+            className="px-6 py-4 bg-emerald-600 text-white rounded-2xl text-xs font-black uppercase flex items-center gap-2 shadow-lg hover:bg-emerald-700 transition active:scale-95"
+          >
+            <Globe2 size={18}/> Criar Carga Online
+          </button>
+
+          <button onClick={handleExportCSV} className="px-6 py-4 bg-white border-2 border-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase flex items-center gap-2 hover:bg-slate-50 transition shadow-sm">
             <FileDown size={18}/> Exportar CSV
           </button>
+
           <div className="relative">
             <button 
               onClick={calculateModel} 
