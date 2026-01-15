@@ -1,6 +1,22 @@
 
 import React, { useMemo, useState } from 'react';
-import { Search, Filter, ThermometerSnowflake, Wind, Info, CheckCircle2, Trash2, Box, Zap, ChevronRight, XCircle, PlusCircle, Droplets } from 'lucide-react';
+import { 
+  Search, 
+  Filter, 
+  ThermometerSnowflake, 
+  Wind, 
+  Info, 
+  CheckCircle2, 
+  Trash2, 
+  Box, 
+  Zap, 
+  ChevronRight, 
+  XCircle, 
+  PlusCircle, 
+  Droplets,
+  AlertTriangle,
+  ArrowRightLeft
+} from 'lucide-react';
 import { ProjectData, Refrigerant, CompressorType, CondensationType } from '../../types';
 import { OEM_DATABASE, BRANDS } from '../../constants';
 
@@ -25,6 +41,7 @@ interface SelectionTabProps {
 
 const SelectionTab: React.FC<SelectionTabProps> = (props) => {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [tempRange, setTempRange] = useState<{min: number, max: number}>({ min: -15, max: 65 });
 
   const filtered = useMemo(() => {
     return OEM_DATABASE.filter(item => {
@@ -34,6 +51,9 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
       const matchesCond = props.condensationFilter === 'All' || item.condensationType === props.condensationFilter; 
       const matchesSearch = props.searchTerm === '' || item.model.toLowerCase().includes(props.searchTerm.toLowerCase()) || item.brand.toLowerCase().includes(props.searchTerm.toLowerCase());
       
+      // Filtro de Range de Temperatura
+      const matchesTempRange = item.minFluidTemp <= tempRange.max && item.maxFluidTemp >= tempRange.min;
+
       let matchesMode = true;
       if (props.modeFilter === 'CoolingOnly') {
         matchesMode = item.heatingCapacity === 0;
@@ -50,9 +70,9 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
         const val = props.project.targetTemperature > 30 ? item.heatingCapacity : item.coolingCapacity;
         matchesIntelligent = val >= capacityRangeMin && val <= capacityRangeMax;
       }
-      return matchesBrand && matchesRefr && matchesComp && matchesCond && matchesSearch && matchesIntelligent && matchesMode;
+      return matchesBrand && matchesRefr && matchesComp && matchesCond && matchesSearch && matchesIntelligent && matchesMode && matchesTempRange;
     });
-  }, [props.brandFilter, props.refrigerantFilter, props.compressorFilter, props.condensationFilter, props.searchTerm, props.modeFilter, props.intelligentFilterEnabled, props.project.peakPower, props.project.targetTemperature]);
+  }, [props.brandFilter, props.refrigerantFilter, props.compressorFilter, props.condensationFilter, props.searchTerm, props.modeFilter, props.intelligentFilterEnabled, props.project.peakPower, props.project.targetTemperature, tempRange]);
 
   const selectedUnits = useMemo(() => 
     OEM_DATABASE.filter(u => props.project.selectedEquipmentIds.includes(u.id))
@@ -73,7 +93,6 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
   const selectAllFiltered = () => {
     const filteredIds = filtered.map(item => item.id);
     props.setProject(prev => {
-      // Adiciona IDs que ainda não estão seleccionados
       const newIds = [...new Set([...prev.selectedEquipmentIds, ...filteredIds])];
       return { ...prev, selectedEquipmentIds: newIds };
     });
@@ -89,6 +108,25 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
     if (filtered.length === 0) return false;
     return filtered.every(item => props.project.selectedEquipmentIds.includes(item.id));
   }, [filtered, props.project.selectedEquipmentIds]);
+
+  // Função de validação técnica
+  const validateUnit = (item: any) => {
+    const isHeating = props.project.targetTemperature > 30;
+    const capacity = isHeating ? item.heatingCapacity : item.coolingCapacity;
+    const peak = props.project.peakPower;
+    
+    const capacityDeviation = Math.abs(capacity - peak) / peak;
+    const isCapacityAlert = capacityDeviation > 0.1;
+    
+    const isTempAlert = props.project.targetTemperature < item.minFluidTemp || props.project.targetTemperature > item.maxFluidTemp;
+    
+    return {
+      isCapacityAlert,
+      capacityDeviation: (capacityDeviation * 100).toFixed(1),
+      isTempAlert,
+      capacity
+    };
+  };
 
   return (
     <div className="space-y-10 animate-in slide-in-from-bottom-6 pb-20">
@@ -114,7 +152,6 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                 <button 
                   onClick={selectAllFiltered}
                   className="px-6 py-4 bg-blue-50 text-blue-700 rounded-full text-xs font-black uppercase flex items-center gap-2 hover:bg-blue-600 hover:text-white transition active:scale-95 border-2 border-blue-100 shadow-sm"
-                  title="Seleccionar todos os itens filtrados"
                 >
                   <PlusCircle size={18}/> Seleccionar Filtrados
                 </button>
@@ -123,7 +160,6 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                 <button 
                   onClick={clearAllSelections}
                   className="px-6 py-4 bg-red-50 text-red-600 rounded-full text-xs font-black uppercase flex items-center gap-2 hover:bg-red-600 hover:text-white transition active:scale-95 border-2 border-red-100 shadow-sm"
-                  title="Limpar toda a selecção actual"
                 >
                   <Trash2 size={18}/> Limpar
                 </button>
@@ -133,12 +169,43 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
         </div>
 
         {showAdvancedFilters && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 pt-6 border-t border-slate-100 animate-in fade-in slide-in-from-top-4">
-            <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Marca</label><select value={props.brandFilter} onChange={e => props.setBrandFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...BRANDS].map(b => <option key={b} value={b}>{b}</option>)}</select></div>
-            <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Refrigerante</label><select value={props.refrigerantFilter} onChange={e => props.setRefrigerantFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(Refrigerant)].map(r => <option key={r} value={r}>{r}</option>)}</select></div>
-            <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Compressor</label><select value={props.compressorFilter} onChange={e => props.setCompressorFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(CompressorType)].map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-            <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Condensação</label><select value={props.condensationFilter} onChange={e => props.setCondensationFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(CondensationType)].map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-            <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Modo</label><select value={props.modeFilter} onChange={e => props.setModeFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition"><option value="All">Todos</option><option value="CoolingOnly">Apenas Frio</option><option value="HeatingOnly">Apenas Calor</option><option value="HeatPump">Bomba Calor</option></select></div>
+          <div className="pt-6 border-t border-slate-100 animate-in fade-in slide-in-from-top-4 space-y-8">
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+              <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Marca</label><select value={props.brandFilter} onChange={e => props.setBrandFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...BRANDS].map(b => <option key={b} value={b}>{b}</option>)}</select></div>
+              <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Refrigerante</label><select value={props.refrigerantFilter} onChange={e => props.setRefrigerantFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(Refrigerant)].map(r => <option key={r} value={r}>{r}</option>)}</select></div>
+              <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Compressor</label><select value={props.compressorFilter} onChange={e => props.setCompressorFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(CompressorType)].map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+              <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Condensação</label><select value={props.condensationFilter} onChange={e => props.setCondensationFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition">{['All', ...Object.values(CondensationType)].map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+              <div className="space-y-2"><label className="text-[9px] font-black uppercase text-slate-400">Modo</label><select value={props.modeFilter} onChange={e => props.setModeFilter(e.target.value)} className="w-full p-3 bg-slate-50 border-none rounded-xl text-xs font-bold focus:ring-2 ring-blue-500 transition"><option value="All">Todos</option><option value="CoolingOnly">Apenas Frio</option><option value="HeatingOnly">Apenas Calor</option><option value="HeatPump">Bomba Calor</option></select></div>
+            </div>
+            
+            <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex flex-col md:flex-row items-center gap-8">
+               <div className="flex items-center gap-4 shrink-0">
+                  <div className="p-3 bg-blue-600 text-white rounded-2xl shadow-lg shadow-blue-200">
+                    <ThermometerSnowflake size={20} />
+                  </div>
+                  <div>
+                    <span className="text-[9px] font-black uppercase text-slate-400 block tracking-widest">Filtro de Amplitude Térmica</span>
+                    <p className="text-xs font-bold text-slate-900">Unidades aptas para operação entre {tempRange.min}ºC e {tempRange.max}ºC</p>
+                  </div>
+               </div>
+               
+               <div className="flex-1 flex items-center gap-4 w-full">
+                  <span className="text-[10px] font-black text-slate-400">{tempRange.min}ºC</span>
+                  <div className="flex-1 flex flex-col gap-2 relative h-6 justify-center">
+                    <input 
+                      type="range" min="-25" max="25" step="1" value={tempRange.min} 
+                      onChange={e => setTempRange(prev => ({ ...prev, min: parseInt(e.target.value) }))}
+                      className="absolute w-full h-1 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-blue-600 z-10"
+                    />
+                    <input 
+                      type="range" min="26" max="85" step="1" value={tempRange.max} 
+                      onChange={e => setTempRange(prev => ({ ...prev, max: parseInt(e.target.value) }))}
+                      className="absolute w-full h-1 bg-transparent rounded-lg appearance-none cursor-pointer accent-indigo-600 z-20 pointer-events-none [&::-webkit-slider-thumb]:pointer-events-auto"
+                    />
+                  </div>
+                  <span className="text-[10px] font-black text-slate-400">{tempRange.max}ºC</span>
+               </div>
+            </div>
           </div>
         )}
       </header>
@@ -162,21 +229,45 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
               const isHeatPump = item.heatingCapacity > 0;
               const isCoolingOnly = item.heatingCapacity === 0;
               const isHeatingOnly = item.coolingCapacity === 0;
+              
+              const validation = validateUnit(item);
 
               return (
-                <tr key={item.id} className="hover:bg-slate-50 transition group">
+                <tr key={item.id} className={`hover:bg-slate-50 transition group ${props.project.selectedEquipmentIds.includes(item.id) ? 'bg-blue-50/20' : ''}`}>
                   <td className="px-10 py-8">
-                    <div>
-                      <span className="font-black text-slate-900 text-lg block leading-tight">{item.brand}</span>
-                      <span className="text-[9px] text-slate-400 font-black uppercase tracking-tighter mt-1 block">
-                        {item.model} • {item.refrigerant} • {item.compressorType}
-                      </span>
+                    <div className="flex items-center gap-4">
+                      <div>
+                        <span className="font-black text-slate-900 text-lg block leading-tight">{item.brand}</span>
+                        <span className="text-[9px] text-slate-400 font-black uppercase tracking-tighter mt-1 block">
+                          {item.model} • {item.refrigerant} • {item.compressorType}
+                        </span>
+                      </div>
+                      {(validation.isCapacityAlert || validation.isTempAlert) && (
+                        <div className="flex gap-1">
+                          {validation.isCapacityAlert && (
+                            <div className="group relative">
+                              <AlertTriangle size={18} className="text-amber-500 animate-pulse" />
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-900 text-white text-[8px] font-black uppercase rounded shadow-xl opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-50">
+                                Desvio de Capacidade: {validation.capacityDeviation}%
+                              </div>
+                            </div>
+                          )}
+                          {validation.isTempAlert && (
+                            <div className="group relative">
+                              <XCircle size={18} className="text-red-500" />
+                              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 p-2 bg-slate-900 text-white text-[8px] font-black uppercase rounded shadow-xl opacity-0 group-hover:opacity-100 transition whitespace-nowrap z-50">
+                                Set-point fora de gama ({props.project.targetTemperature}ºC)
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-8 text-center">
                     {!isHeatingOnly ? (
                       <div>
-                        <span className="font-black text-xl text-blue-600">{item.coolingCapacity.toFixed(1)}</span>
+                        <span className={`font-black text-xl ${validation.isCapacityAlert && props.project.targetTemperature <= 30 ? 'text-amber-600 underline decoration-wavy' : 'text-blue-600'}`}>{item.coolingCapacity.toFixed(1)}</span>
                         <span className="text-[10px] font-black ml-1">kWf</span>
                       </div>
                     ) : (
@@ -186,7 +277,7 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                   <td className="px-6 py-8 text-center">
                     {isHeatPump || isHeatingOnly ? (
                       <div>
-                        <span className="font-black text-xl text-red-600">{item.heatingCapacity.toFixed(1)}</span>
+                        <span className={`font-black text-xl ${validation.isCapacityAlert && props.project.targetTemperature > 30 ? 'text-amber-600 underline decoration-wavy' : 'text-red-600'}`}>{item.heatingCapacity.toFixed(1)}</span>
                         <span className="text-[10px] font-black ml-1">kWq</span>
                       </div>
                     ) : (
@@ -215,9 +306,9 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                   </td>
                   <td className="px-6 py-8">
                     <div className="flex flex-col gap-2 items-center">
-                      <div className="flex items-center gap-2 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100/50 w-32">
-                        <ThermometerSnowflake size={14} className="text-blue-600 shrink-0" />
-                        <span className="text-[10px] font-black text-slate-700">{item.minFluidTemp}/{item.maxFluidTemp}ºC</span>
+                      <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border w-32 ${validation.isTempAlert ? 'bg-red-50 border-red-200 text-red-600' : 'bg-blue-50/50 border-blue-100/50 text-slate-700'}`}>
+                        <ThermometerSnowflake size={14} className={validation.isTempAlert ? 'text-red-500' : 'text-blue-600'} />
+                        <span className="text-[10px] font-black">{item.minFluidTemp}/{item.maxFluidTemp}ºC</span>
                       </div>
                       <div className="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-100 w-32">
                         <Wind size={14} className="text-slate-400 shrink-0" />
@@ -228,7 +319,7 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                   <td className="px-10 py-8 text-right">
                     <button 
                       onClick={() => toggleSelection(item.id)} 
-                      className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase transition shadow-lg ${props.project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white shadow-red-200' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white hover:shadow-blue-200'}`}
+                      className={`px-8 py-4 rounded-2xl text-[10px] font-black uppercase transition shadow-lg active:scale-95 ${props.project.selectedEquipmentIds.includes(item.id) ? 'bg-red-500 text-white shadow-red-200' : 'bg-slate-100 text-slate-600 hover:bg-blue-600 hover:text-white'}`}
                     >
                       {props.project.selectedEquipmentIds.includes(item.id) ? 'Remover' : 'Seleccionar'}
                     </button>
@@ -249,7 +340,6 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
         </table>
       </div>
 
-      {/* Resumo Rodapé de Seleccionados */}
       {selectedUnits.length > 0 && (
         <div className="bg-white p-10 rounded-[50px] border shadow-2xl space-y-8 animate-in slide-in-from-bottom-4">
           <div className="flex justify-between items-center border-b pb-6">
@@ -263,47 +353,43 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {selectedUnits.map(u => (
-              <div key={u.id} className="bg-slate-50 p-6 rounded-[30px] border border-slate-100 relative group overflow-hidden hover:bg-white hover:shadow-xl transition-all">
-                <div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button 
-                    onClick={() => toggleSelection(u.id)}
-                    className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-600 hover:text-white transition"
-                    title="Remover"
-                  >
-                    <XCircle size={16} />
-                  </button>
-                </div>
-                <div className="flex flex-col gap-4">
-                  <div>
-                    <span className="text-[10px] font-black uppercase text-blue-600 block tracking-widest">{u.brand}</span>
-                    <span className="text-sm font-black text-slate-900 line-clamp-1">{u.model}</span>
+            {selectedUnits.map(u => {
+              const val = validateUnit(u);
+              return (
+                <div key={u.id} className={`p-6 rounded-[30px] border relative group overflow-hidden transition-all hover:shadow-xl ${val.isTempAlert || val.isCapacityAlert ? 'bg-amber-50 border-amber-200' : 'bg-slate-50 border-slate-100 hover:bg-white'}`}>
+                  <div className="absolute top-0 right-0 p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button 
+                      onClick={() => toggleSelection(u.id)}
+                      className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-600 hover:text-white transition"
+                    >
+                      <XCircle size={16} />
+                    </button>
                   </div>
-                  <div className="flex justify-between items-end">
-                    <div className="space-y-1">
-                      <span className="text-[9px] font-bold text-slate-400 block uppercase">Capacidade</span>
-                      <div className="flex items-center gap-2">
-                        <Zap size={14} className="text-amber-500" />
-                        <span className="text-lg font-black text-slate-800">{Math.max(u.coolingCapacity, u.heatingCapacity).toFixed(0)} kW</span>
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1">
+                        <span className="text-[10px] font-black uppercase text-blue-600 block tracking-widest">{u.brand}</span>
+                        <span className="text-sm font-black text-slate-900 line-clamp-1">{u.model}</span>
+                      </div>
+                      {(val.isTempAlert || val.isCapacityAlert) && <AlertTriangle size={16} className="text-amber-500 mt-1 shrink-0" />}
+                    </div>
+                    <div className="flex justify-between items-end">
+                      <div className="space-y-1">
+                        <span className="text-[9px] font-bold text-slate-400 block uppercase">Capacidade</span>
+                        <div className="flex items-center gap-2">
+                          <Zap size={14} className={val.isCapacityAlert ? 'text-amber-600' : 'text-amber-500'} />
+                          <span className={`text-lg font-black ${val.isCapacityAlert ? 'text-amber-700' : 'text-slate-800'}`}>{val.capacity.toFixed(0)} kW</span>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                         <span className="text-[9px] font-bold text-slate-400 block uppercase">Eficiência</span>
+                         <span className="text-lg font-black text-emerald-600">{u.eseer.toFixed(2)}</span>
                       </div>
                     </div>
-                    <div className="text-right">
-                       <span className="text-[9px] font-bold text-slate-400 block uppercase">Eficiência</span>
-                       <span className="text-lg font-black text-emerald-600">{u.eseer.toFixed(2)}</span>
-                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex justify-end gap-4 pt-4">
-            <button 
-              onClick={() => props.setProject(p => ({ ...p, activeTab: 'analysis' }))} /* Mock logic if activeTab was in project */
-              className="flex items-center gap-2 px-10 py-5 bg-slate-900 text-white rounded-[25px] font-black uppercase text-xs tracking-widest hover:bg-blue-600 transition shadow-xl"
-            >
-              Prosseguir para Análise <ChevronRight size={18} />
-            </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -317,14 +403,14 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
             <Info size={24} />
           </div>
           <div>
-            <h4 className="font-black uppercase text-xs tracking-widest">Aviso de Compatibilidade</h4>
-            <p className="text-[10px] text-slate-400 font-medium max-w-xl">As gamas de temperatura variam conforme o modelo e fluido frigorigéneo seleccionado. Verifique sempre o catálogo técnico oficial antes da adjudicação.</p>
+            <h4 className="font-black uppercase text-xs tracking-widest">Validação em Tempo Real</h4>
+            <p className="text-[10px] text-slate-400 font-medium max-w-xl">O sistema valida automaticamente a compatibilidade térmica ({props.project.targetTemperature}ºC) e a capacidade (+/- 10% de {props.project.peakPower}kW) das unidades seleccionadas.</p>
           </div>
         </div>
         <div className="flex gap-4 relative z-10">
            <div className="text-right border-l-4 border-blue-600 pl-6">
-              <span className="block text-[9px] font-black uppercase text-slate-500 mb-1 tracking-widest">Seleccionados / Filtro</span>
-              <span className="text-2xl font-black text-blue-400">{selectedUnits.length} / {filtered.length}</span>
+              <span className="block text-[9px] font-black uppercase text-slate-500 mb-1 tracking-widest">Estado da Selecção</span>
+              <span className="text-2xl font-black text-blue-400">{selectedUnits.length} Seleccionados</span>
            </div>
         </div>
       </div>
