@@ -29,7 +29,9 @@ import {
   Settings,
   ArrowRightLeft,
   Droplets,
-  Box
+  Box,
+  AlertTriangle,
+  RefreshCw
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, LineChart, Line, Legend, LabelList } from 'recharts';
 import { ProjectData, OEMEquipment, CondensationType } from '../../types';
@@ -39,17 +41,35 @@ import { generateTechnicalReport } from '../../services/geminiService';
 interface Props {
   project: ProjectData;
   selectedReportUnitId: string | null;
+  reportText: string | null;
+  setReportText: (t: string | null) => void;
+  reportHash: string | null;
+  setReportHash: (h: string | null) => void;
 }
 
-const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
+const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId, reportText, setReportText, reportHash, setReportHash }) => {
   const [generating, setGenerating] = useState(false);
-  const [rawReportText, setRawReportText] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const reportContainerRef = useRef<HTMLDivElement>(null);
 
   const selectedUnits = useMemo(() => 
     OEM_DATABASE.filter(e => project.selectedEquipmentIds.includes(e.id))
   , [project.selectedEquipmentIds]);
+
+  // Current State Hash to detect if report is stale
+  const currentHash = useMemo(() => {
+    return JSON.stringify({
+      units: project.selectedEquipmentIds.sort(),
+      selectedUnit: selectedReportUnitId,
+      district: project.selectedDistrict,
+      peak: project.peakPower,
+      temp: project.targetTemperature,
+      location: project.location,
+      price: project.electricityPrice
+    });
+  }, [project.selectedEquipmentIds, selectedReportUnitId, project.selectedDistrict, project.peakPower, project.targetTemperature, project.location, project.electricityPrice]);
+
+  const isStale = reportText && reportHash !== currentHash;
 
   // Priority: 1. Manually selected for report in ROI tab, 2. First unit in selected list
   const mainUnit = useMemo(() => {
@@ -73,9 +93,10 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
     setGenerating(true);
     try {
       const res = await generateTechnicalReport(project, selectedUnits);
-      setRawReportText(res);
+      setReportText(res);
+      setReportHash(currentHash);
     } catch (err) { 
-      setRawReportText("Erro de conexão com o servidor de IA."); 
+      setReportText("Erro de conexão com o servidor de IA."); 
     } finally { 
       setGenerating(false); 
     }
@@ -115,16 +136,16 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
   };
 
   const getSection = (index: number) => {
-    if (!rawReportText) return "";
+    if (!reportText) return "";
     const regex = new RegExp(`\\[SECCAO_${index}\\]([\\s\\S]*?)\\[RODAPE_${index}\\]`, 'g');
-    const match = regex.exec(rawReportText);
+    const match = regex.exec(reportText);
     return match ? match[1].trim() : "";
   };
 
   const getFooterAnalysis = (index: number) => {
-    if (!rawReportText) return "Análise técnica em processamento...";
+    if (!reportText) return "Análise técnica em processamento...";
     const regex = new RegExp(`\\[RODAPE_${index}\\]([\\s\\S]*?)(\\[SECCAO|$)`, 'g');
-    const match = regex.exec(rawReportText);
+    const match = regex.exec(reportText);
     return match ? match[1].trim() : "Consulte os anexos técnicos para mais detalhes.";
   };
 
@@ -156,20 +177,26 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
 
   return (
     <div className="space-y-16 animate-in slide-in-from-bottom-6 pb-40">
-      <header className="flex flex-col xl:flex-row justify-between items-center bg-white p-10 rounded-[40px] border shadow-xl gap-6 no-print">
+      <header className="flex flex-col xl:flex-row justify-between items-center bg-white p-10 rounded-[40px] border shadow-xl gap-6 no-print relative overflow-hidden">
+        {isStale && <div className="absolute top-0 left-0 right-0 h-1 bg-amber-500 animate-pulse"></div>}
         <div className="text-center xl:text-left">
           <h2 className="text-5xl font-black text-slate-900 leading-tight tracking-tighter">Parecer Técnico <span className="text-blue-600 italic">IA Expert</span></h2>
           <p className="text-slate-500 text-lg font-medium mt-2">Documentação executiva completa com análise preditiva avançada.</p>
         </div>
         
         <div className="flex flex-wrap gap-3 justify-center">
-          {!generating && !rawReportText && (
-            <button onClick={triggerReport} disabled={selectedUnits.length === 0} className="px-10 py-5 bg-blue-600 text-white rounded-[30px] font-black uppercase tracking-widest flex items-center gap-4 shadow-2xl hover:bg-blue-700 disabled:opacity-50 transition active:scale-95">
-              <Sparkles size={24} /> Gerar Relatório Completo
+          {(!reportText || isStale) && (
+            <button 
+              onClick={triggerReport} 
+              disabled={selectedUnits.length === 0 || generating} 
+              className={`px-10 py-5 rounded-[30px] font-black uppercase tracking-widest flex items-center gap-4 shadow-2xl transition active:scale-95 disabled:opacity-50 ${isStale ? 'bg-amber-600 hover:bg-amber-700 text-white animate-bounce' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
+            >
+              {generating ? <RefreshCw className="animate-spin" size={24} /> : <Sparkles size={24} />}
+              {isStale ? 'Parâmetros Alterados - Regenerar' : (reportText ? 'Regenerar Relatório' : 'Gerar Relatório Completo')}
             </button>
           )}
 
-          {rawReportText && (
+          {reportText && (
             <>
               <div className="flex gap-2 border-r pr-4 border-slate-100">
                 <button onClick={copyToClipboard} className="p-4 bg-slate-50 border-2 border-slate-100 text-slate-600 rounded-2xl hover:bg-white transition shadow-sm flex items-center gap-2 font-black uppercase text-[10px]">
@@ -190,6 +217,19 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
         </div>
       </header>
 
+      {isStale && (
+        <div className="no-print mx-auto max-w-4xl bg-amber-50 border-2 border-amber-200 p-6 rounded-[30px] flex items-center gap-6 animate-in slide-in-from-top-4 shadow-xl">
+           <div className="bg-amber-600 p-4 rounded-2xl text-white">
+              <AlertTriangle size={32} />
+           </div>
+           <div className="flex-1">
+              <h4 className="text-lg font-black text-amber-900 uppercase">Relatório Desactualizado</h4>
+              <p className="text-sm font-medium text-amber-800 leading-tight">Os parâmetros do projeto (pico térmico, localização ou seleção OEM) foram alterados após a geração deste parecer. O texto abaixo pode não refletir as condições atuais.</p>
+           </div>
+           <button onClick={triggerReport} className="px-6 py-3 bg-amber-600 text-white rounded-xl font-black uppercase text-xs hover:bg-amber-700 transition">Actualizar Agora</button>
+        </div>
+      )}
+
       {generating ? (
          <div className="py-40 text-center flex flex-col items-center gap-10">
             <div className="relative">
@@ -202,7 +242,7 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
               <p className="text-slate-500 font-bold uppercase text-xs tracking-widest animate-pulse">Inteligência Artificial Koelho2000 em Processamento</p>
             </div>
          </div>
-      ) : rawReportText ? (
+      ) : reportText ? (
         <div className="flex flex-col items-center space-y-20" ref={reportContainerRef}>
           
           {/* PÁGINA 1: CAPA */}
@@ -657,7 +697,7 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
                       <div className="p-4 bg-white/5 rounded-2xl"><MapPin className="text-blue-400" size={24} /></div>
                       <div className="space-y-1">
                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest block">Sede e Laboratórios</span>
-                         <p className="text-sm font-bold">Estrada do Algueirão, 2725-021<br/>Sintra, Portugal</p>
+                         <p className="text-sm font-bold">Rua da boa vontade 4, Barrunchal<br/>2710-151 Sintra</p>
                       </div>
                    </div>
                    <div className="flex items-center gap-6">
@@ -674,14 +714,14 @@ const ReportTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
                       <div className="p-4 bg-white/5 rounded-2xl"><Phone className="text-blue-400" size={24} /></div>
                       <div className="space-y-1">
                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest block">Suporte Técnico</span>
-                         <p className="text-sm font-bold">+351 210 000 000<br/>Linha Profissional</p>
+                         <p className="text-sm font-bold">934 021 666<br/>Linha Directa</p>
                       </div>
                    </div>
                    <div className="flex items-center gap-6">
                       <div className="p-4 bg-white/5 rounded-2xl"><ShieldCheck className="text-blue-400" size={24} /></div>
                       <div className="space-y-1">
                          <span className="text-[10px] font-black uppercase text-slate-500 tracking-widest block">Compliance</span>
-                         <p className="text-sm font-bold">NIPC: 500 000 000<br/>Projecto Certificado</p>
+                         <p className="text-sm font-bold">NIPC: 513 183 647<br/>Projecto Certificado</p>
                       </div>
                    </div>
                 </div>

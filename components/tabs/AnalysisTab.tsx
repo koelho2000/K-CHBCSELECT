@@ -17,7 +17,9 @@ import {
   FileCode,
   FileType,
   Copy,
-  Check
+  Check,
+  Wind,
+  Droplets
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -30,7 +32,7 @@ import {
   Legend, 
   Cell 
 } from 'recharts';
-import { ProjectData, OEMEquipment } from '../../types';
+import { ProjectData, OEMEquipment, CondensationType } from '../../types';
 import { OEM_DATABASE } from '../../constants';
 
 interface Props {
@@ -201,6 +203,7 @@ const AnalysisTab: React.FC<Props> = ({ project, selectedReportUnitId, setSelect
                     <th className="px-4 py-6 text-center">Aquec. (kW)</th>
                     <th className="px-4 py-6 text-center">ESEER</th>
                     <th className="px-4 py-6 text-center">SCOP</th>
+                    <th className="px-4 py-6 text-center">Condensação</th>
                     <th className="px-4 py-6 text-center">Ruído (dB)</th>
                     <th className="px-4 py-6 text-center">Preço (€)</th>
                     <th className="px-8 py-6 text-right no-print">Selecção</th>
@@ -222,6 +225,12 @@ const AnalysisTab: React.FC<Props> = ({ project, selectedReportUnitId, setSelect
                       </td>
                       <td className="px-4 py-6 text-center">
                         <span className={`font-black text-lg ${u.scop >= 4 ? 'text-indigo-600' : 'text-slate-600'}`}>{u.scop > 0 ? u.scop.toFixed(2) : '-'}</span>
+                      </td>
+                      <td className="px-4 py-6 text-center">
+                        <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase flex items-center justify-center gap-1 mx-auto w-fit ${u.condensationType === CondensationType.AIR ? 'bg-blue-100 text-blue-700' : 'bg-cyan-100 text-cyan-700'}`}>
+                          {u.condensationType === CondensationType.AIR ? <Wind size={10} /> : <Droplets size={10} />}
+                          {u.condensationType}
+                        </span>
                       </td>
                       <td className="px-4 py-6 text-center font-medium text-slate-500">{u.noiseLevel}</td>
                       <td className="px-4 py-6 text-center font-black text-slate-900">{u.price.toLocaleString()}€</td>

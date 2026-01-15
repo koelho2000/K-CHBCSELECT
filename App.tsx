@@ -31,6 +31,10 @@ const App: React.FC = () => {
   // State lifted from AnalysisTab to App level to sync between Report/Sheet
   const [selectedReportUnitId, setSelectedReportUnitId] = useState<string | null>(null);
   
+  // Persisted AI Report State
+  const [reportText, setReportText] = useState<string | null>(null);
+  const [reportHash, setReportHash] = useState<string | null>(null);
+
   // Selection Filters
   const [brandFilter, setBrandFilter] = useState('All');
   const [refrigerantFilter, setRefrigerantFilter] = useState('All');
@@ -139,6 +143,9 @@ const App: React.FC = () => {
         try {
           const imported = JSON.parse(event.target.result);
           setProject(imported);
+          // Invalidate report on open to ensure consistency
+          setReportText(null);
+          setReportHash(null);
         } catch (err) { alert("Erro ao importar ficheiro."); }
       };
       reader.readAsText(file);
@@ -190,7 +197,16 @@ const App: React.FC = () => {
           selectedReportUnitId={selectedReportUnitId} 
         />
       )}
-      {activeTab === 'report' && <ReportTab project={project} selectedReportUnitId={selectedReportUnitId} />}
+      {activeTab === 'report' && (
+        <ReportTab 
+          project={project} 
+          selectedReportUnitId={selectedReportUnitId} 
+          reportText={reportText}
+          setReportText={setReportText}
+          reportHash={reportHash}
+          setReportHash={setReportHash}
+        />
+      )}
     </Layout>
   );
 };

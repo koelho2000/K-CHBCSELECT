@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState } from 'react';
-import { Search, Filter, ThermometerSnowflake, Wind, Info, CheckCircle2, Trash2, Box, Zap, ChevronRight, XCircle, PlusCircle } from 'lucide-react';
+import { Search, Filter, ThermometerSnowflake, Wind, Info, CheckCircle2, Trash2, Box, Zap, ChevronRight, XCircle, PlusCircle, Droplets } from 'lucide-react';
 import { ProjectData, Refrigerant, CompressorType, CondensationType } from '../../types';
 import { OEM_DATABASE, BRANDS } from '../../constants';
 
@@ -152,6 +152,7 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
               <th className="px-6 py-8 text-center">Aquecimento (kW)</th>
               <th className="px-4 py-8 text-center">ESEER</th>
               <th className="px-4 py-8 text-center">SCOP</th>
+              <th className="px-4 py-8 text-center">Condensação</th>
               <th className="px-6 py-8 text-center">Gamas Operação</th>
               <th className="px-10 py-8 text-right">Acção</th>
             </tr>
@@ -206,6 +207,12 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
                       <span className="text-slate-300 font-black">-</span>
                     )}
                   </td>
+                  <td className="px-4 py-8 text-center">
+                    <span className={`text-[10px] font-black px-3 py-1 rounded-full uppercase flex items-center justify-center gap-1 mx-auto w-fit ${item.condensationType === CondensationType.AIR ? 'bg-blue-100 text-blue-700' : 'bg-cyan-100 text-cyan-700'}`}>
+                      {item.condensationType === CondensationType.AIR ? <Wind size={10} /> : <Droplets size={10} />}
+                      {item.condensationType}
+                    </span>
+                  </td>
                   <td className="px-6 py-8">
                     <div className="flex flex-col gap-2 items-center">
                       <div className="flex items-center gap-2 bg-blue-50/50 px-3 py-1.5 rounded-xl border border-blue-100/50 w-32">
@@ -230,7 +237,7 @@ const SelectionTab: React.FC<SelectionTabProps> = (props) => {
               );
             }) : (
               <tr>
-                <td colSpan={7} className="px-10 py-20 text-center">
+                <td colSpan={8} className="px-10 py-20 text-center">
                   <div className="flex flex-col items-center gap-4 opacity-30 grayscale">
                     <Box size={64} />
                     <p className="font-black uppercase tracking-widest text-slate-400 italic">Nenhum equipamento encontrado com os filtros actuais.</p>

@@ -3,12 +3,10 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { 
   Zap, 
   RefreshCw, 
-  Gauge, 
   Calendar, 
   AlertCircle, 
   Info, 
   BookOpen, 
-  Grid3X3, 
   Thermometer, 
   Activity,
   Printer,
@@ -19,13 +17,18 @@ import {
   AlertTriangle,
   TrendingUp,
   BarChart2,
-  LineChart as LineChartIcon,
   ShieldCheck,
   Search,
-  Scale
+  Scale,
+  Clock,
+  ZapOff,
+  FileDown,
+  Table,
+  BarChart3,
+  Euro
 } from 'lucide-react';
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, LineChart, BarChart, Bar, Cell } from 'recharts';
-import { ProjectData, CondensationType, OEMEquipment } from '../../types';
+import { ProjectData, CondensationType } from '../../types';
 import { OEM_DATABASE } from '../../constants';
 
 interface Props {
@@ -54,9 +57,9 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
       loadsLen: project.hourlyLoads.length,
       targetT: project.targetTemperature,
       peak: project.peakPower,
-      loadsSample: [project.hourlyLoads[0], project.hourlyLoads[project.hourlyLoads.length - 1]]
+      price: project.electricityPrice
     });
-  }, [mainEquipment, project.weatherData, project.hourlyLoads, project.targetTemperature, project.peakPower]);
+  }, [mainEquipment, project.weatherData.length, project.hourlyLoads.length, project.targetTemperature, project.peakPower, project.electricityPrice]);
 
   const isStale = simResult && currentStatusHash !== lastSimHash;
 
@@ -72,8 +75,8 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
       let copSum = 0;
       let eerC = 0;
       let copC = 0;
-      const hourlyData = [];
       
+      const allHourly = [];
       const monthlyStats = Array.from({ length: 12 }, (_, i) => ({ 
         name: ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][i],
         thermal: 0, 
@@ -89,13 +92,17 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
         const load = project.hourlyLoads[i] || 0;
         const isHeating = project.targetTemperature > 30;
         const nominal = isHeating ? mainEquipment.heatingCapacity : mainEquipment.coolingCapacity;
+        
         const pl = nominal > 0 ? Math.max(25, Math.min(100, (load / nominal) * 100)) : 0;
         
         const curve = mainEquipment.efficiencyCurve;
         const lower = curve.reduce((prev, curr) => curr.x <= pl ? curr : prev, curve[0]);
         const upper = curve.reduce((prev, curr) => curr.x >= pl ? (prev.x > curr.x ? curr : prev) : curr, curve[curve.length-1]);
+        
         let plf = lower.y;
-        if (upper.x !== lower.x) plf = lower.y + (upper.y - lower.y) * (pl - lower.x) / (upper.x - lower.x);
+        if (upper.x !== lower.x) {
+          plf = lower.y + (upper.y - lower.y) * (pl - lower.x) / (upper.x - lower.x);
+        }
         
         let tempCorr = 1.0;
         if (mainEquipment.condensationType === CondensationType.AIR) {
@@ -103,8 +110,9 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
           else tempCorr = 1 + (w.tbs - 7) * 0.025;
         }
         
-        const realEff = (isHeating ? mainEquipment.cop : mainEquipment.eer) * plf * tempCorr;
-        const elec = realEff > 0 ? load / realEff : 0;
+        const baseEff = isHeating ? mainEquipment.cop : mainEquipment.eer;
+        const realEff = Math.max(0.1, baseEff * plf * tempCorr);
+        const elec = load / realEff;
 
         thermalSum += load; 
         elecSum += elec;
@@ -128,26 +136,92 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
           }
         }
 
-        if (i % 24 === 0) hourlyData.push({ hour: i, load, elec, eff: realEff });
+        allHourly.push({
+          hour: i % 24,
+          day: Math.floor(i / 24),
+          load,
+          elec,
+          eff: realEff
+        });
       });
+
+      // Identificar o dia de pico para o gráfico diário representativo
+      const dailyLoads = Array.from({ length: 365 }, (_, d) => {
+        const slice = allHourly.slice(d * 24, (d + 1) * 24);
+        return { day: d, total: slice.reduce((acc, curr) => acc + curr.load, 0) };
+      });
+      const peakDayIdx = dailyLoads.sort((a, b) => b.total - a.total)[0].day;
+      const peakDayData = allHourly.slice(peakDayIdx * 24, (peakDayIdx + 1) * 24).map(d => ({
+        ...d,
+        label: `${d.hour}h`,
+        load: Number(d.load.toFixed(2)),
+        elec: Number(d.elec.toFixed(2)),
+        eff: Number(d.eff.toFixed(2))
+      }));
 
       setSimResult({
         thermalMWh: thermalSum / 1000, 
         elecMWh: elecSum / 1000,
+        annualCost: elecSum * project.electricityPrice,
         seer: eerC > 0 ? eerSum / eerC : 0, 
         scop: copC > 0 ? copSum / copC : 0,
         monthly: monthlyStats.map(m => ({ 
           ...m, 
-          thermalMWh: (m.thermal / 1000).toFixed(1), 
-          elecMWh: (m.elec / 1000).toFixed(1),
+          thermalMWh: Number((m.thermal / 1000).toFixed(1)), 
+          elecMWh: Number((m.elec / 1000).toFixed(1)),
+          avgEERNum: m.eerCount > 0 ? Number((m.eerAcc / m.eerCount).toFixed(2)) : 0,
+          avgCOPNum: m.copCount > 0 ? Number((m.copAcc / m.copCount).toFixed(2)) : 0,
           avgEER: m.eerCount > 0 ? (m.eerAcc / m.eerCount).toFixed(2) : 'N/A',
           avgCOP: m.copCount > 0 ? (m.copAcc / m.copCount).toFixed(2) : 'N/A'
         })),
-        hourly: hourlyData
+        dailyPeak: peakDayData,
+        timestamp: Date.now()
       });
       setLastSimHash(currentStatusHash);
       setCalculating(false);
-    }, 800);
+    }, 500);
+  };
+
+  const exportFull8760CSV = () => {
+    if (!mainEquipment || project.weatherData.length < 8760) return;
+    
+    const isHeating = project.targetTemperature > 30;
+    const effLabel = isHeating ? 'COP' : 'EER';
+    let csv = "Mes,Dia,Hora,TBS(C),RH(%),Carga Termica(kW),Consumo Eletrico(kW)," + effLabel + "\n";
+    
+    project.weatherData.forEach((w, i) => {
+      const load = project.hourlyLoads[i] || 0;
+      const nominal = isHeating ? mainEquipment.heatingCapacity : mainEquipment.coolingCapacity;
+      const pl = nominal > 0 ? Math.max(25, Math.min(100, (load / nominal) * 100)) : 0;
+      
+      const curve = mainEquipment.efficiencyCurve;
+      const lower = curve.reduce((prev, curr) => curr.x <= pl ? curr : prev, curve[0]);
+      const upper = curve.reduce((prev, curr) => curr.x >= pl ? (prev.x > curr.x ? curr : prev) : curr, curve[curve.length-1]);
+      
+      let plf = lower.y;
+      if (upper.x !== lower.x) {
+        plf = lower.y + (upper.y - lower.y) * (pl - lower.x) / (upper.x - lower.x);
+      }
+      
+      let tempCorr = 1.0;
+      if (mainEquipment.condensationType === CondensationType.AIR) {
+        if (!isHeating) tempCorr = 1 - (w.tbs - 35) * 0.032;
+        else tempCorr = 1 + (w.tbs - 7) * 0.025;
+      }
+      
+      const baseEff = isHeating ? mainEquipment.cop : mainEquipment.eer;
+      const realEff = Math.max(0.1, baseEff * plf * tempCorr);
+      const elec = load / realEff;
+
+      csv += `${w.month},${w.day},${i % 24},${w.tbs.toFixed(1)},${w.rh.toFixed(1)},${load.toFixed(2)},${elec.toFixed(2)},${realEff.toFixed(2)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Dados_Horarios_8760h_${mainEquipment.brand}_${mainEquipment.model}.csv`;
+    a.click();
   };
 
   useEffect(() => {
@@ -161,7 +235,6 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
     const isHeating = project.targetTemperature > 30;
     const baseEff = isHeating ? mainEquipment.cop : mainEquipment.eer;
     
-    // Sensibilidade à Temperatura (Carga Fixa a 75%)
     const temps = isHeating ? [-10, -5, 0, 5, 7, 10, 15, 20] : [15, 20, 25, 30, 35, 40, 45, 50];
     const vsTemp = temps.map(t => {
       const pl = 75;
@@ -179,7 +252,6 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
       return { temp: t, label: `${t}ºC`, value: parseFloat((baseEff * plf * tempCorr).toFixed(2)) };
     });
 
-    // Sensibilidade à Carga (Temp Fixa a 35ºC Frio / 7ºC Calor)
     const loads = [25, 30, 40, 50, 60, 70, 80, 90, 100];
     const vsLoad = loads.map(l => {
       const t = isHeating ? 7 : 35;
@@ -244,6 +316,9 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
           {mainEquipment && (
             <>
               <div className="flex gap-2 border-r pr-4 border-slate-100">
+                <button onClick={exportFull8760CSV} className="p-4 bg-emerald-50 border-2 border-emerald-100 text-emerald-700 rounded-2xl hover:bg-emerald-600 hover:text-white transition shadow-sm flex items-center gap-2 font-black uppercase text-[10px]">
+                  <FileDown size={16}/> Exportar 8760h
+                </button>
                 <button onClick={copyToClipboard} className="p-4 bg-slate-50 border-2 border-slate-100 text-slate-600 rounded-2xl hover:bg-white transition shadow-sm flex items-center gap-2 font-black uppercase text-[10px]">
                   {copied ? <Check size={16} className="text-emerald-500"/> : <Copy size={16}/>} {copied ? 'Copiado!' : 'Copiar'}
                 </button>
@@ -268,7 +343,7 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
       {simResult ? (
         <div className="space-y-12" ref={perfRef}>
           {/* Métricas de Topo */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-8">
             <div className="bg-slate-900 p-8 rounded-[40px] text-white shadow-2xl border-b-8 border-blue-500">
               <span className="text-[10px] font-black uppercase text-slate-500 block mb-2 tracking-widest">Energia Térmica Anual</span>
               <div className="text-4xl font-black text-blue-400">{simResult.thermalMWh.toFixed(1)} <span className="text-lg">MWh</span></div>
@@ -276,6 +351,10 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
             <div className="bg-white p-8 rounded-[40px] border shadow-xl border-b-8 border-red-500">
               <span className="text-[10px] font-black uppercase text-slate-400 block mb-2 tracking-widest">Consumo Eléctrico Anual</span>
               <div className="text-4xl font-black text-red-500">{simResult.elecMWh.toFixed(1)} <span className="text-lg">MWh</span></div>
+            </div>
+            <div className="bg-white p-8 rounded-[40px] border shadow-xl border-b-8 border-amber-500">
+              <span className="text-[10px] font-black uppercase text-slate-400 block mb-2 tracking-widest">Custo Energético Anual</span>
+              <div className="text-4xl font-black text-amber-600">{simResult.annualCost.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-lg">€</span></div>
             </div>
             <div className="bg-white p-8 rounded-[40px] border shadow-xl border-b-8 border-emerald-500">
               <span className="text-[10px] font-black uppercase text-slate-400 block mb-2 tracking-widest">Eficiência SEER</span>
@@ -287,13 +366,99 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
             </div>
           </div>
 
-          {/* Novos Diagramas de Sensibilidade: Temperatura Exterior */}
+          {/* GRÁFICO DIÁRIO REPRESENTATIVO (PICO) */}
+          <div className="bg-white p-12 rounded-[60px] border shadow-2xl h-[600px] flex flex-col no-print relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5">
+               <Clock size={180} />
+            </div>
+            <header className="mb-10">
+              <h3 className="text-2xl font-black flex items-center gap-4 text-slate-900">
+                <Activity size={28} className="text-blue-600"/> Ciclo Diário de Operação (Peak Day)
+              </h3>
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Análise sincronizada de Carga vs Consumo vs Eficiência Instantânea</p>
+            </header>
+            
+            <div className="flex-1 min-h-[350px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={simResult.dailyPeak} margin={{ top: 20, right: 60, left: 20, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="label" fontSize={10} stroke="#94a3b8" />
+                  <YAxis yAxisId="power" fontSize={10} stroke="#94a3b8" unit=" kW" />
+                  <YAxis yAxisId="efficiency" orientation="right" fontSize={10} stroke="#10b981" domain={[0, 'auto']} />
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', padding: '15px' }}
+                    formatter={(value: number, name: string) => {
+                      if (name.includes('Eficiência')) return [value.toFixed(2), name];
+                      return [`${value.toFixed(1)} kW`, name];
+                    }}
+                  />
+                  <Legend verticalAlign="top" height={40} iconType="circle" />
+                  <Area yAxisId="power" type="monotone" dataKey="load" fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={3} name="Carga Térmica" isAnimationActive={false}/>
+                  <Line yAxisId="power" type="monotone" dataKey="elec" stroke="#ef4444" strokeWidth={3} dot={{ r: 4, strokeWidth: 2, fill: '#fff' }} name="Consumo Eléctrico" isAnimationActive={false}/>
+                  <Line yAxisId="efficiency" type="stepAfter" dataKey="eff" stroke="#10b981" strokeWidth={4} strokeDasharray="5 5" dot={false} name={project.targetTemperature > 30 ? 'Eficiência (COP)' : 'Eficiência (EER)'} isAnimationActive={false}/>
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* NOVO GRÁFICO: BALANÇO MENSAL DE ENERGIA E EFICIÊNCIA */}
+          <div className="bg-white p-12 rounded-[60px] border shadow-2xl h-[600px] flex flex-col no-print relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-5">
+               <Calendar size={180} />
+            </div>
+            <header className="mb-10">
+              <h3 className="text-2xl font-black flex items-center gap-4 text-slate-900">
+                <BarChart3 size={28} className="text-indigo-600"/> Balanço Mensal de Energia (MWh) e Eficiência
+              </h3>
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest mt-1">Comparativo mensal de produção térmica, consumo eléctrico e rendimento médio</p>
+            </header>
+            
+            <div className="flex-1 min-h-[350px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <ComposedChart data={simResult.monthly} margin={{ top: 20, right: 60, left: 20, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" fontSize={10} stroke="#94a3b8" />
+                  
+                  {/* Eixo Esquerdo para Energia (MWh) */}
+                  <YAxis yAxisId="energy" fontSize={10} stroke="#94a3b8" unit=" MWh" />
+                  
+                  {/* Eixo Direito para Eficiência (Ratio) */}
+                  <YAxis yAxisId="eff" orientation="right" fontSize={10} stroke="#6366f1" domain={[0, 'auto']} />
+                  
+                  <Tooltip 
+                    contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', padding: '15px' }}
+                    formatter={(value: number, name: string) => {
+                      if (name.includes('Eficiência')) return [value.toFixed(2), name];
+                      return [`${value.toFixed(1)} MWh`, name];
+                    }}
+                  />
+                  <Legend verticalAlign="top" height={40} iconType="circle" />
+                  
+                  <Bar yAxisId="energy" dataKey="thermalMWh" fill="#3b82f6" name="Energia Térmica (MWh)" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                  <Bar yAxisId="energy" dataKey="elecMWh" fill="#ef4444" name="Consumo Eléctrico (MWh)" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                  
+                  <Line 
+                    yAxisId="eff"
+                    type="monotone" 
+                    dataKey={project.targetTemperature > 30 ? 'avgCOPNum' : 'avgEERNum'} 
+                    stroke="#6366f1" 
+                    strokeWidth={4} 
+                    dot={{ r: 6, strokeWidth: 2, fill: '#fff' }} 
+                    name={project.targetTemperature > 30 ? 'Eficiência Média (COP)' : 'Eficiência Média (EER)'}
+                    isAnimationActive={false}
+                  />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Diagramas de Sensibilidade: Temperatura Exterior */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
             <div className="lg:col-span-2 bg-white p-10 rounded-[50px] border shadow-2xl h-[500px] flex flex-col">
               <h3 className="text-xl font-black mb-8 flex items-center gap-4 text-slate-900">
                 <Thermometer size={28} className="text-red-500"/> Eficiência vs Temperatura Exterior
               </h3>
-              <div className="flex-1">
+              <div className="flex-1 min-h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={sensitivityData?.vsTemp}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -301,7 +466,7 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
                     <YAxis fontSize={10} stroke="#94a3b8" unit="" domain={['auto', 'auto']} />
                     <Tooltip contentStyle={{borderRadius: '15px', border: 'none'}} />
                     <Legend verticalAlign="top" height={36}/>
-                    <Line type="monotone" dataKey="value" stroke={project.targetTemperature > 30 ? '#6366f1' : '#10b981'} strokeWidth={4} name={project.targetTemperature > 30 ? 'COP (Carga 75%)' : 'EER (Carga 75%)'} dot={{ r: 6, strokeWidth: 2, fill: '#fff' }} />
+                    <Line type="monotone" dataKey="value" stroke={project.targetTemperature > 30 ? '#6366f1' : '#10b981'} strokeWidth={4} name={project.targetTemperature > 30 ? 'COP (Carga 75%)' : 'EER (Carga 75%)'} dot={{ r: 6, strokeWidth: 2, fill: '#fff' }} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -323,13 +488,13 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
             </div>
           </div>
 
-          {/* Novos Diagramas de Sensibilidade: Carga Parcial */}
+          {/* Diagramas de Sensibilidade: Carga Parcial */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
             <div className="lg:col-span-2 bg-white p-10 rounded-[50px] border shadow-2xl h-[500px] flex flex-col">
               <h3 className="text-xl font-black mb-8 flex items-center gap-4 text-slate-900">
                 <BarChart2 size={28} className="text-indigo-600"/> Eficiência vs Modulação de Carga
               </h3>
-              <div className="flex-1">
+              <div className="flex-1 min-h-[300px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sensitivityData?.vsLoad} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
@@ -337,7 +502,7 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
                     <YAxis fontSize={10} stroke="#94a3b8" />
                     <Tooltip cursor={{fill: '#f8fafc'}} contentStyle={{borderRadius: '15px', border: 'none'}} />
                     <Legend verticalAlign="top" height={36}/>
-                    <Bar dataKey="value" fill="#3b82f6" name={project.targetTemperature > 30 ? 'COP Instantâneo' : 'EER Instantâneo'} radius={[8, 8, 0, 0]}>
+                    <Bar dataKey="value" fill="#3b82f6" name={project.targetTemperature > 30 ? 'COP Instantâneo' : 'EER Instantâneo'} radius={[8, 8, 0, 0]} isAnimationActive={false}>
                       {sensitivityData?.vsLoad.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={index === 2 || index === 3 ? '#10b981' : '#3b82f6'} />
                       ))}
@@ -361,19 +526,6 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
                 </table>
               </div>
             </div>
-          </div>
-
-          {/* Gráfico de Balanço Anual 8760h */}
-          <div className="bg-white p-12 rounded-[60px] border shadow-2xl h-[500px] no-print">
-            <h3 className="text-2xl font-black mb-10 flex items-center gap-4 text-slate-900"><Gauge size={28} className="text-blue-600"/> Balanço Térmico vs Eléctrico (kW) - Histórico Anual</h3>
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={simResult.hourly}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis hide /><YAxis fontSize={10} unit=" kW"/><Tooltip />
-                <Area type="monotone" dataKey="load" fill="#bfdbfe" fillOpacity={0.4} stroke="#3b82f6" strokeWidth={2} name="Carga Térmica" />
-                <Line type="monotone" dataKey="elec" stroke="#ef4444" strokeWidth={3} dot={false} name="Consumo Eléctrico" />
-              </ComposedChart>
-            </ResponsiveContainer>
           </div>
 
           {/* Resumo Mensal */}
@@ -405,9 +557,8 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
             </div>
           </div>
 
-          {/* NOVOS RODAPÉS: METODOLOGIA E ANÁLISE */}
+          {/* RODAPÉS: METODOLOGIA E ANÁLISE */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-            {/* Rodapé: Metodologia de Cálculo */}
             <div className="bg-slate-900 p-10 rounded-[50px] text-white shadow-2xl border-t-8 border-blue-600 relative overflow-hidden">
               <BookOpen className="absolute -right-10 -bottom-10 text-white opacity-5" size={250} />
               <h3 className="text-2xl font-black mb-8 flex items-center gap-4 relative z-10">
@@ -432,7 +583,6 @@ const PerformanceTab: React.FC<Props> = ({ project, selectedReportUnitId }) => {
               </div>
             </div>
 
-            {/* Rodapé: Análise dos Resultados */}
             <div className="bg-white p-10 rounded-[50px] border shadow-2xl border-t-8 border-emerald-600 relative overflow-hidden">
               <Search className="absolute -right-10 -bottom-10 text-slate-100 opacity-50" size={250} />
               <h3 className="text-2xl font-black mb-8 flex items-center gap-4 relative z-10 text-slate-900">
